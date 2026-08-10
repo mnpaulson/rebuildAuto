@@ -5,6 +5,8 @@ using System.Linq;
 using Assets.Scripts;
 using Assets.Scripts.Editor;
 using Assets.Scripts.MapEditor.Editor;
+using Assets.Scripts.Sprites;
+using RebuildSharedData.ClientTypes;
 using UnityEditor;
 using UnityEngine;
 
@@ -283,6 +285,285 @@ namespace Assets.Editor
             CreateTemporarySpriteIfRequired("poison_spore", "deathspore");
 
             RunPostCopyProcessing(openLightingManager: true);
+        }
+
+        private const string MinimalDevelopmentMap = "prt_fild08";
+
+        private static readonly string[] MinimalDevelopmentEffects =
+        {
+            "RedPotion",
+            "LevelUp",
+            "Hit"
+        };
+
+        private static readonly int[] MinimalDevelopmentStarterItems =
+        {
+            501, 569, 601, 602, 611, 713, 909, 1201, 1202, 2301, 2302
+        };
+
+        private sealed class MinimalImportSelection
+        {
+            public readonly HashSet<int> ItemIds = new HashSet<int>(MinimalDevelopmentStarterItems);
+            public readonly HashSet<int> SkillIds = new HashSet<int>();
+            public readonly HashSet<string> MonsterSprites = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public readonly HashSet<string> NpcSprites = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public readonly HashSet<string> EffectSounds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        [MenuItem("Ragnarok/Minimal Development Copy", priority = 2)]
+        public static void CopyMinimalDevelopmentData()
+        {
+            var dataDir = RagnarokDirectory.GetRagnarokDataDirectorySafe;
+            if (string.IsNullOrWhiteSpace(dataDir) || !Directory.Exists(dataDir))
+            {
+                EditorUtility.DisplayDialog(
+                    "Minimal Development Copy",
+                    "Set a valid Ragnarok data directory first with Ragnarok/Set Ragnarok Data Directory.",
+                    "OK"
+                );
+                return;
+            }
+
+            var requiredFiles = new[]
+            {
+                Path.Combine(dataDir, MinimalDevelopmentMap + ".gnd"),
+                Path.Combine(dataDir, MinimalDevelopmentMap + ".gat"),
+                Path.Combine(dataDir, MinimalDevelopmentMap + ".rsw"),
+                "Assets/StreamingAssets/ClientConfigGenerated/maps.json",
+                "Assets/StreamingAssets/ClientConfigGenerated/monsterclass.json",
+                "Assets/StreamingAssets/ClientConfigGenerated/monsterdatabase.json",
+                "Assets/StreamingAssets/ClientConfigGenerated/npcdatabase.json",
+                "Assets/StreamingAssets/ClientConfigGenerated/items.json",
+                "Assets/StreamingAssets/ClientConfigGenerated/playerclass.json",
+                "Assets/StreamingAssets/ClientConfigGenerated/skillinfo.json",
+                "Assets/StreamingAssets/ClientConfigGenerated/skilltree.json",
+                "Assets/StreamingAssets/ClientConfigGenerated/effects.json",
+                "Assets/StreamingAssets/ClientConfig/headdata.json"
+            };
+            var missingFiles = requiredFiles.Where(path => !File.Exists(path)).ToArray();
+            if (missingFiles.Length > 0)
+            {
+                EditorUtility.DisplayDialog(
+                    "Minimal Development Copy",
+                    "Required files are missing:\n\n" + string.Join("\n", missingFiles) +
+                    "\n\nRun updateclient.bat if the generated client configuration is missing.",
+                    "OK"
+                );
+                return;
+            }
+
+            if (!EditorUtility.DisplayDialog(
+                    "Minimal Development Copy",
+                    "Import the one-map development setup for prt_fild08? Existing imported assets will be kept.",
+                    "Import",
+                    "Cancel"))
+                return;
+
+            try
+            {
+                var selection = BuildMinimalImportSelection();
+                var copied = CopyMinimalRawFiles(dataDir, selection);
+
+                AssetDatabase.Refresh();
+                EffectStrImporter.Import(MinimalDevelopmentEffects);
+                EffectStrImporter.ImportEffectTextures();
+                RagnarokMapImporterWindow.ImportAllMissingMaps(new[] { MinimalDevelopmentMap });
+                ItemIconImporter.ImportItems(selection.ItemIds, selection.SkillIds, replaceAtlas: false);
+                RagnarokMapImporterWindow.UpdateAddressables(processModels: false);
+                RoLightingManagerWindow.CreateOrOpen();
+
+                Debug.Log(
+                    $"[Minimal Development Copy] Complete. Copied {copied} raw file(s), " +
+                    $"selected {selection.MonsterSprites.Count} monster sprite(s), " +
+                    $"{selection.NpcSprites.Count} NPC sprite(s), {selection.ItemIds.Count} item icon(s), " +
+                    $"and {selection.SkillIds.Count} Novice skill icon(s)."
+                );
+                EditorUtility.DisplayDialog(
+                    "Minimal Development Copy",
+                    "Import complete. Use the RoRebuildServer (Minimal) launch profile, then open the main Unity scene and enter Play mode.\n\n" +
+                    "Lighting for prt_fild08 can be baked from the window that was opened.",
+                    "OK"
+                );
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+                EditorUtility.DisplayDialog(
+                    "Minimal Development Copy Failed",
+                    "The import stopped with an error. See the Unity Console for details.\n\n" + exception.Message,
+                    "OK"
+                );
+            }
+        }
+
+        private static MinimalImportSelection BuildMinimalImportSelection()
+        {
+            var selection = new MinimalImportSelection();
+            var monsterDatabase = JsonUtility.FromJson<MonsterDbFile>(
+                File.ReadAllText("Assets/StreamingAssets/ClientConfigGenerated/monsterdatabase.json")
+            );
+            var monsterClasses = JsonUtility.FromJson<Wrapper<MonsterClassData>>(
+                File.ReadAllText("Assets/StreamingAssets/ClientConfigGenerated/monsterclass.json")
+            ).Items.ToDictionary(monster => monster.Id);
+
+            foreach (var monster in monsterDatabase.Items.Where(monster =>
+                         monster.Spawns.Any(spawn => string.Equals(spawn.Map, MinimalDevelopmentMap, StringComparison.OrdinalIgnoreCase))))
+            {
+                if (monsterClasses.TryGetValue(monster.Id, out var monsterClass) &&
+                    !string.IsNullOrWhiteSpace(monsterClass.SpriteName) &&
+                    !monsterClass.SpriteName.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                    selection.MonsterSprites.Add(monsterClass.SpriteName);
+
+                foreach (var drop in monster.Drops ?? new List<MonsterDbDropEntry>())
+                    selection.ItemIds.Add(drop.ItemId);
+            }
+
+            var npcDatabase = JsonUtility.FromJson<NpcDbFile>(
+                File.ReadAllText("Assets/StreamingAssets/ClientConfigGenerated/npcdatabase.json")
+            );
+            foreach (var npc in npcDatabase.Items.Where(npc =>
+                         string.Equals(npc.Map, MinimalDevelopmentMap, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (!string.IsNullOrWhiteSpace(npc.SpriteCode))
+                    selection.NpcSprites.Add(npc.SpriteCode);
+                foreach (var itemId in npc.SellsItems ?? new List<int>())
+                    selection.ItemIds.Add(itemId);
+            }
+
+            var skillTrees = JsonUtility.FromJson<Wrapper<ClientSkillTree>>(
+                File.ReadAllText("Assets/StreamingAssets/ClientConfigGenerated/skilltree.json")
+            );
+            var noviceTree = skillTrees.Items.FirstOrDefault(tree => tree.ClassId == 0);
+            if (noviceTree != null)
+                foreach (var skill in noviceTree.Skills)
+                    selection.SkillIds.Add((int)skill.Skill);
+
+            var effects = JsonUtility.FromJson<EffectTypeList>(
+                File.ReadAllText("Assets/StreamingAssets/ClientConfigGenerated/effects.json")
+            );
+            foreach (var effect in effects.Effects.Where(effect => MinimalDevelopmentEffects.Contains(effect.Name)))
+                if (!string.IsNullOrWhiteSpace(effect.SoundFile))
+                    selection.EffectSounds.Add(effect.SoundFile);
+
+            return selection;
+        }
+
+        private static int CopyMinimalRawFiles(string dataDir, MinimalImportSelection selection)
+        {
+            var copied = 0;
+
+            foreach (var sprite in selection.MonsterSprites)
+                copied += CopySpritePair(
+                    Path.Combine(dataDir, "sprite/몬스터"),
+                    "Assets/Sprites/Monsters",
+                    Path.GetFileNameWithoutExtension(sprite)
+                );
+
+            foreach (var sprite in selection.NpcSprites)
+                copied += CopySpritePair(Path.Combine(dataDir, "sprite/npc"), "Assets/Sprites/Npcs", sprite);
+
+            var playerClasses = JsonUtility.FromJson<Wrapper<PlayerClassData>>(
+                File.ReadAllText("Assets/StreamingAssets/ClientConfigGenerated/playerclass.json")
+            );
+            var novice = playerClasses.Items.First(playerClass => playerClass.Id == 0);
+            copied += CopySpritePair(
+                Path.Combine(dataDir, "sprite/인간족/몸통/남"),
+                Path.GetDirectoryName(novice.SpriteMale),
+                Path.GetFileNameWithoutExtension(novice.SpriteMale)
+            );
+            copied += CopySpritePair(
+                Path.Combine(dataDir, "sprite/인간족/몸통/여"),
+                Path.GetDirectoryName(novice.SpriteFemale),
+                Path.GetFileNameWithoutExtension(novice.SpriteFemale)
+            );
+
+            var heads = JsonUtility.FromJson<Wrapper<PlayerHeadData>>(
+                File.ReadAllText("Assets/StreamingAssets/ClientConfig/headdata.json")
+            );
+            var firstHead = heads.Items.First();
+            foreach (var head in firstHead.MaleIds)
+                copied += CopySpritePair(Path.Combine(dataDir, "sprite/인간족/머리통/남"), "Assets/Sprites/Characters/HeadMale", head);
+            foreach (var head in firstHead.FemaleIds)
+                copied += CopySpritePair(Path.Combine(dataDir, "sprite/인간족/머리통/여"), "Assets/Sprites/Characters/HeadFemale", head);
+
+            var noviceJob = RagnarokClientDataImportDefinitions.JobSpriteMappings.First(mapping => mapping.DestinationName == "Novice");
+            CopyFolder(
+                Path.Combine(dataDir, "sprite/인간족", noviceJob.SourceName),
+                "Assets/Sprites/Weapons/Novice",
+                maleFemaleSplit: true,
+                updateFileName: UpdateSpriteName
+            );
+            CopyFolder(
+                Path.Combine(dataDir, "sprite/방패", noviceJob.SourceName),
+                "Assets/Sprites/Shields/Novice",
+                maleFemaleSplit: true,
+                updateFileName: UpdateSpriteName
+            );
+
+            foreach (var file in RagnarokClientDataImportDefinitions.MiscellaneousFiles)
+                if (CopyFileIfMissing(Path.Combine(dataDir, file.SourceRelativePath), file.DestinationPath))
+                    copied++;
+
+            foreach (var sound in selection.EffectSounds)
+            {
+                var wavRoot = Path.Combine(dataDir, "wav");
+                if (!Directory.Exists(wavRoot))
+                    continue;
+                var source = Directory.GetFiles(wavRoot, sound + ".*", SearchOption.AllDirectories).FirstOrDefault();
+                if (source == null)
+                {
+                    Debug.LogWarning($"[Minimal Development Copy] Optional sound not found: {sound}");
+                    continue;
+                }
+
+                var relativePath = Path.GetRelativePath(wavRoot, source);
+                if (CopyFileIfMissing(source, Path.Combine("Assets/Sounds", relativePath)))
+                    copied++;
+            }
+
+            return copied;
+        }
+
+        private static int CopySpritePair(string sourceDirectory, string destinationDirectory, string spriteName)
+        {
+            if (!Directory.Exists(sourceDirectory))
+            {
+                Debug.LogWarning($"[Minimal Development Copy] Sprite source directory not found: {sourceDirectory}");
+                return 0;
+            }
+
+            var copied = 0;
+            foreach (var extension in new[] { ".spr", ".act" })
+            {
+                var source = Directory.GetFiles(sourceDirectory, "*" + extension, SearchOption.TopDirectoryOnly)
+                    .FirstOrDefault(path => string.Equals(
+                        Path.GetFileNameWithoutExtension(path),
+                        spriteName,
+                        StringComparison.OrdinalIgnoreCase
+                    ));
+                if (source == null)
+                {
+                    Debug.LogWarning($"[Minimal Development Copy] Optional sprite file not found: {spriteName}{extension}");
+                    continue;
+                }
+
+                if (CopyFileIfMissing(source, Path.Combine(destinationDirectory, Path.GetFileName(source))))
+                    copied++;
+            }
+
+            return copied;
+        }
+
+        private static bool CopyFileIfMissing(string sourcePath, string destinationPath)
+        {
+            if (!File.Exists(sourcePath) || File.Exists(destinationPath))
+                return false;
+
+            var destinationDirectory = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                Directory.CreateDirectory(destinationDirectory);
+            File.Copy(sourcePath, destinationPath);
+            return true;
         }
 
         private static void RunPostCopyProcessing(bool openLightingManager)
