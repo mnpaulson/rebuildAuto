@@ -292,7 +292,7 @@ namespace Assets.Editor
         {
             if (!Directory.Exists(sourceDirectory))
             {
-                Debug.LogWarning($"[Minimal Development Copy] Sprite source directory not found: {sourceDirectory}");
+                Debug.LogWarning($"[Development Copy] Sprite source directory not found: {sourceDirectory}");
                 return 0;
             }
 
@@ -307,7 +307,7 @@ namespace Assets.Editor
                     ));
                 if (source == null)
                 {
-                    Debug.LogWarning($"[Minimal Development Copy] Optional sprite file not found: {spriteName}{extension}");
+                    Debug.LogWarning($"[Development Copy] Optional sprite file not found: {spriteName}{extension}");
                     continue;
                 }
 

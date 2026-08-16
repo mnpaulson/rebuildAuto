@@ -8,32 +8,32 @@ using UnityEngine;
 namespace Assets.Editor
 {
     [Serializable]
-    public sealed class RagnarokDevelopmentCopyProfile
+    public sealed class RagnarokCopyProfile
     {
         public string name = "";
         public string description = "";
         public bool all;
-        public RagnarokDevelopmentCopyResources resources = new RagnarokDevelopmentCopyResources();
+        public RagnarokCopyProfileResources resources = new();
 
         [NonSerialized] public string AssetPath = "";
 
         public void EnsureDefaults()
         {
-            resources ??= new RagnarokDevelopmentCopyResources();
+            resources ??= new RagnarokCopyProfileResources();
             resources.EnsureDefaults();
         }
     }
 
     [Serializable]
-    public sealed class RagnarokDevelopmentCopyResources
+    public sealed class RagnarokCopyProfileResources
     {
-        public List<string> maps = new List<string>();
-        public List<int> items = new List<int>();
-        public List<string> jobs = new List<string>();
-        public List<string> monsters = new List<string>();
-        public List<int> npcs = new List<int>();
-        public List<string> effects = new List<string>();
-        public List<int> skills = new List<int>();
+        public List<string> maps = new();
+        public List<int> items = new();
+        public List<string> jobs = new();
+        public List<string> monsters = new();
+        public List<int> npcs = new();
+        public List<string> effects = new();
+        public List<int> skills = new();
 
         public void EnsureDefaults()
         {
@@ -47,23 +47,17 @@ namespace Assets.Editor
         }
     }
 
-    public sealed class RagnarokDevelopmentCopyWindow : EditorWindow
+    public sealed class RagnarokCopyUtilityWindow : EditorWindow
     {
-        private const string ProfileDirectory = "Assets/Scripts/Editor/DevelopmentCopyProfiles";
+        private const string PROFILE_DIRECTORY = "Assets/StreamingAssets/ProjectConfig";
 
-        private readonly List<RagnarokDevelopmentCopyProfile> profiles = new List<RagnarokDevelopmentCopyProfile>();
-        private readonly List<string> validationErrors = new List<string>();
+        private readonly List<RagnarokCopyProfile> profiles = new();
+        private readonly List<string> validationErrors = new();
         private string[] profileNames = Array.Empty<string>();
         private Vector2 scrollPosition;
         private int selectedProfile;
 
-        [MenuItem("Ragnarok/Development Copy Profiles", priority = 2)]
-        public static void Open()
-        {
-            Open(null);
-        }
-
-        [MenuItem("Ragnarok/Minimal Development Copy", priority = 2)]
+        [MenuItem("Ragnarok/Copy data from Profile", priority = 2)]
         public static void OpenMinimum()
         {
             Open("minimum.json");
@@ -71,28 +65,23 @@ namespace Assets.Editor
 
         private static void Open(string preferredFile)
         {
-            var window = GetWindow<RagnarokDevelopmentCopyWindow>("Development Copy");
+            var window = GetWindow<RagnarokCopyUtilityWindow>("Ragnarok Copy Utility");
             window.LoadProfiles(preferredFile);
             window.Show();
-        }
-
-        private void OnEnable()
-        {
-            LoadProfiles(null);
         }
 
         private void LoadProfiles(string preferredFile)
         {
             profiles.Clear();
 
-            if (Directory.Exists(ProfileDirectory))
+            if (Directory.Exists(PROFILE_DIRECTORY))
             {
-                foreach (var path in Directory.GetFiles(ProfileDirectory, "*.json", SearchOption.TopDirectoryOnly)
+                foreach (var path in Directory.GetFiles(PROFILE_DIRECTORY, "*.json", SearchOption.TopDirectoryOnly)
                              .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
                 {
                     try
                     {
-                        var profile = JsonUtility.FromJson<RagnarokDevelopmentCopyProfile>(File.ReadAllText(path));
+                        var profile = JsonUtility.FromJson<RagnarokCopyProfile>(File.ReadAllText(path));
                         if (profile == null)
                             continue;
                         profile.EnsureDefaults();
@@ -101,7 +90,7 @@ namespace Assets.Editor
                     }
                     catch (Exception exception)
                     {
-                        Debug.LogError($"Could not load development copy profile '{path}': {exception.Message}");
+                        Debug.LogError($"[Ragnarok Copy Utility] Could not load resource profile '{path}': {exception.Message}");
                     }
                 }
             }
@@ -130,26 +119,53 @@ namespace Assets.Editor
                 return;
 
             var profile = profiles[selectedProfile];
-            validationErrors.AddRange(RagnarokCopyFromRealClient.ValidateDevelopmentProfile(profile));
+            validationErrors.AddRange(RagnarokCopyFromRealClient.ValidateProfile(profile));
             if (profiles.Count(candidate => string.Equals(candidate.name, profile.name, StringComparison.OrdinalIgnoreCase)) > 1)
                 validationErrors.Add($"Profile name '{profile.name}' is duplicated.");
+        }
+
+        private void OpenFilePicker()
+        {
+            var oldPath = EditorPrefs.GetString("RagnarokDataPath", null);
+            var startPath = oldPath;
+
+            if (string.IsNullOrWhiteSpace(startPath) || !Directory.Exists(startPath))
+                startPath = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
+
+            var path = EditorUtility.OpenFolderPanel("Locate Ragnarok Data Folder", startPath, "");
+
+            if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+            {
+                EditorPrefs.SetString("RagnarokDataPath", path);
+                Debug.Log("[Ragnarok Copy Utility] Ragnarok data directory set to: " + path);
+            }
+            else
+                Debug.LogWarning("[Ragnarok Copy Utility] Failed to set data directory. Using old directory: " + EditorPrefs.GetString("RagnarokDataPath", null));
         }
 
         private void OnGUI()
         {
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Ragnarok Development Copy", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
                 "Profiles copy only their selected resources and required dependencies. Existing assets are never removed.",
                 MessageType.Info);
+            EditorGUILayout.Space();
 
             if (profiles.Count == 0)
             {
-                EditorGUILayout.HelpBox($"No JSON profiles were found in {ProfileDirectory}.", MessageType.Error);
+                EditorGUILayout.HelpBox($"No JSON profiles were found in {PROFILE_DIRECTORY}.", MessageType.Error);
                 if (GUILayout.Button("Refresh"))
                     LoadProfiles(null);
                 return;
             }
+
+            if (GUILayout.Button("Locate Data folder"))
+            {
+                OpenFilePicker();
+            }
+
+            var dataFolderPath = EditorPrefs.GetString("RagnarokDataPath", null);
+            EditorGUILayout.LabelField("Data folder path", dataFolderPath);
 
             var newSelection = EditorGUILayout.Popup("Profile", selectedProfile, profileNames);
             if (newSelection != selectedProfile)
@@ -190,7 +206,7 @@ namespace Assets.Editor
 
             GUI.enabled = validationErrors.Count == 0;
             if (GUILayout.Button("Import Profile", GUILayout.Height(28)))
-                RagnarokCopyFromRealClient.CopyDevelopmentProfile(profile);
+                RagnarokCopyFromRealClient.CopyFromProfile(profile, dataFolderPath);
             GUI.enabled = true;
             EditorGUILayout.EndHorizontal();
         }
