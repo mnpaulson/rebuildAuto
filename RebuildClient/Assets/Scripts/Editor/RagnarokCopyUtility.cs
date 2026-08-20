@@ -94,10 +94,9 @@ namespace Assets.Editor
                 var selectionErrors = new List<string>();
                 var selection = BuildImportSelection(profile, dataDir, selectionErrors);
                 var copied = CopyRawFiles(dataDir, selection);
+                copied += ImportCommonResources(dataDir);
 
-                AssetDatabase.Refresh();
                 EffectStrImporter.Import(selection.EffectNames);
-                EffectStrImporter.ImportEffectTextures();
                 RagnarokMapImporterWindow.ImportAllMissingMaps(selection.Maps);
                 ItemIconImporter.ImportItems(selection.ItemIds, selection.SkillIds, replaceAtlas: false);
                 RagnarokMapImporterWindow.UpdateAddressables(processModels: false);
@@ -400,6 +399,14 @@ namespace Assets.Editor
                 CopyJobProfileSprites(dataDir, mapping);
             }
 
+            copied += CopySoundEffects(dataDir, selection.EffectSounds);
+
+            return copied;
+        }
+
+        private static int ImportCommonResources(string dataDir)
+        {
+            var copied = 0;
             var heads = JsonUtility.FromJson<Wrapper<PlayerHeadData>>(
                 File.ReadAllText(RagnarokConfigFiles[9])
             );
@@ -423,7 +430,18 @@ namespace Assets.Editor
                 if (CopyFileIfMissing(Path.Combine(dataDir, file.SourceRelativePath), file.DestinationPath))
                     copied++;
 
-            foreach (var sound in selection.EffectSounds)
+            copied += CopySoundEffects(dataDir, RagnarokClientDataImportDefinitions.CommonSoundEffects);
+
+            AssetDatabase.Refresh();
+            EffectStrImporter.ImportEffectTextures();
+
+            return copied;
+        }
+
+        private static int CopySoundEffects(string dataDir, IEnumerable<string> sounds)
+        {
+            var copied = 0;
+            foreach (var sound in sounds)
             {
                 var wavRoot = Path.Combine(dataDir, "wav");
                 if (!Directory.Exists(wavRoot))

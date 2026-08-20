@@ -88,6 +88,18 @@ namespace Assets.Editor
             new FixedFileImport("sprite/이팩트/숫자.spr", "Assets/Sprites/Misc/damagenumbers.spr")
         };
 
+        // File names without extensions. The importer searches recursively under the client's wav directory.
+        internal static readonly string[] CommonSoundEffects =
+        {
+            "_heal_effect",
+            "levelup",
+            "버튼소리.ogg",
+            "_hit_sword.ogg",
+            "_hit_fist1.ogg",
+            "_hit_fist3.ogg",
+            "_hit_fist4.ogg",
+        };
+
         internal static readonly TemporaryMonsterAlias[] TemporaryMonsterAliases =
         {
             new TemporaryMonsterAlias("andre", "andre_larva"),
