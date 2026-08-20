@@ -93,11 +93,11 @@ namespace Assets.Editor
         {
             "_heal_effect",
             "levelup",
-            "버튼소리.ogg",
-            "_hit_sword.ogg",
-            "_hit_fist1.ogg",
-            "_hit_fist3.ogg",
-            "_hit_fist4.ogg",
+            "버튼소리",
+            "_hit_sword",
+            "_hit_fist1",
+            "_hit_fist3",
+            "_hit_fist4",
         };
 
         internal static readonly TemporaryMonsterAlias[] TemporaryMonsterAliases =
