@@ -125,3 +125,6 @@ Other/RoWikiGenerator/Microsoft.CodeAnalysis.Razor.Compiler/
 RebuildClient/Assets/StreamingAssets/ClientConfigGenerated/
 RebuildClient/Assets/Textures/Import/
 Recordings/
+RebuildBotPlugin/bin/
+RebuildBotPlugin/obj/
+scratch/
