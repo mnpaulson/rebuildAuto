@@ -1,5 +1,5 @@
 {
-  "Enabled": false,
+  "Enabled": true,
   "AutoAttack": true,
   "AutoLoot": true,
   "AutoWander": true,
@@ -8,21 +8,24 @@
   "AutoAvoidMonsters": true,
   "EmergencyFlyWingOnLowHp": true,
   "EmergencyFlyWingHpPercent": 20,
-  "AutoSitToRecover": true,
+  "AutoSitToRecover": false,
   "SitHpPercent": 30,
   "StandHpPercent": 90,
   "FlyWingCooldownSeconds": 1.5,
   "FlyWingItemId": 601,
   "VerboseLogging": true,
-  "HpPotionPercent": 50,
-  "HpPotionItemId": 507,
+  "HpPotionPercent": 70,
+  "HpPotionItemId": 501,
   "HpPotionItemIds": [
     501,
     502,
     503,
     512,
     507,
-    519
+    519,
+    528,
+    517,
+    516
   ],
   "AutoAspdPotion": true,
   "AspdPotionPreference": "Auto",
@@ -69,17 +72,28 @@
     "Soft Fluff": "Sell",
     "Sticky Mucus": "Sell",
     "Tooth of Bat": "Sell",
-    "Venom Canine": "Sell"
+    "Venom Canine": "Sell",
+    "Animal Skin": "Sell",
+    "Solid Trunk": "Sell",
+    "Tree Root": "Sell",
+    "Wolf Claw": "Sell",
+    "Spore Card": "Store",
+    "Fine-Grained Trunk": "Sell",
+    "Resin": "Sell",
+    "Spore Doll": "Sell",
+    "Wolf Card": "Store",
+    "Barren Trunk": "Sell"
   },
   "ReturnToBaseWeightPercent": 90,
   "AutoReturnToBaseOnWeight": true,
+  "AutoReturnOnOutOfHpItems": true,
   "AutoRestock": true,
   "AutoRestockOnLowSupplies": true,
   "RestockTargets": {
     "Fly_Wing": 100,
     "Butterfly_Wing": 5,
     "Milk": 100,
-    "Concentration_Potion": 3
+    "Awakening_Potion": 3
   },
   "SearchRadius": 18,
   "AttackRange": 2,
@@ -87,7 +101,7 @@
   "LootCooldownSeconds": 0.3,
   "WanderCooldownSeconds": 4,
   "WanderRadius": 8,
-  "TargetMap": "pay_dun00",
+  "TargetMap": "pay_fild02",
   "AutoTravel": true,
   "AvoidPortalsWhileWandering": true,
   "PortalSafetyRadius": 5,
@@ -97,7 +111,9 @@
   "TargetMonsterBlacklist": [
     "Target Dummy",
     "Red Plant",
-    "Black Mushroom"
+    "Black Mushroom",
+    "Red Mushroom",
+    "Green Plant"
   ],
   "MonsterAvoidanceList": [
     "Baphomet",
@@ -274,6 +290,28 @@
       "CooldownSeconds": 1.5,
       "TargetMonsters": [],
       "Enabled": false
+    }
+  ],
+  "AutoStatAllocation": true,
+  "StatBuildPlan": [
+    {
+      "Stat": "Dex",
+      "Target": 30
+    },
+    {
+      "Stat": "Agi",
+      "Target": 70
+    },
+    {
+      "Stat": "Str",
+      "Target": 50
+    }
+  ],
+  "AutoSkillAllocation": true,
+  "SkillBuildPlan": [
+    {
+      "Skill": "BasicSkill",
+      "Target": 9
     }
   ]
 }

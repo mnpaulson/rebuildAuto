@@ -25,58 +25,55 @@ namespace RebuildBotPlugin
 
         public void UpdateBaseExp(int exp, int maxExp)
         {
-            if (CurrentBaseExp == -1)
-            {
-                CurrentBaseExp = exp;
-                MaxBaseExp = maxExp;
-                return;
-            }
+            long current = CurrentBaseExp;
+            long max = MaxBaseExp;
+            long gained = SessionBaseExpGained;
 
-            if (exp > CurrentBaseExp)
-            {
-                long gain = exp - CurrentBaseExp;
-                SessionBaseExpGained += gain;
-            }
-            else if (exp < CurrentBaseExp)
-            {
-                // Level up occurred: previous level required MaxBaseExp - CurrentBaseExp, plus overflow
-                if (MaxBaseExp > 0 && maxExp != MaxBaseExp)
-                {
-                    long gain = (MaxBaseExp - CurrentBaseExp) + exp;
-                    if (gain > 0) SessionBaseExpGained += gain;
-                }
-            }
+            UpdateExp(ref current, ref max, ref gained, exp, maxExp);
 
-            CurrentBaseExp = exp;
-            MaxBaseExp = maxExp;
+            CurrentBaseExp = current;
+            MaxBaseExp = max;
+            SessionBaseExpGained = gained;
         }
 
         public void UpdateJobExp(int exp, int maxExp)
         {
-            if (CurrentJobExp == -1)
+            long current = CurrentJobExp;
+            long max = MaxJobExp;
+            long gained = SessionJobExpGained;
+
+            UpdateExp(ref current, ref max, ref gained, exp, maxExp);
+
+            CurrentJobExp = current;
+            MaxJobExp = max;
+            SessionJobExpGained = gained;
+        }
+
+        private static void UpdateExp(ref long currentExp, ref long maxExp, ref long sessionGained, int newExp, int newMaxExp)
+        {
+            if (currentExp == -1)
             {
-                CurrentJobExp = exp;
-                MaxJobExp = maxExp;
+                currentExp = newExp;
+                maxExp = newMaxExp;
                 return;
             }
 
-            if (exp > CurrentJobExp)
+            if (newExp > currentExp)
             {
-                long gain = exp - CurrentJobExp;
-                SessionJobExpGained += gain;
+                sessionGained += (newExp - currentExp);
             }
-            else if (exp < CurrentJobExp)
+            else if (newExp < currentExp)
             {
-                // Job level up occurred
-                if (MaxJobExp > 0 && maxExp != MaxJobExp)
+                // Level up occurred: previous level required (maxExp - currentExp), plus new overflow
+                if (maxExp > 0 && newMaxExp != maxExp)
                 {
-                    long gain = (MaxJobExp - CurrentJobExp) + exp;
-                    if (gain > 0) SessionJobExpGained += gain;
+                    long gain = (maxExp - currentExp) + newExp;
+                    if (gain > 0) sessionGained += gain;
                 }
             }
 
-            CurrentJobExp = exp;
-            MaxJobExp = maxExp;
+            currentExp = newExp;
+            maxExp = newMaxExp;
         }
 
         public double ElapsedHours
@@ -93,32 +90,18 @@ namespace RebuildBotPlugin
         public double BaseExpPerHour => SessionBaseExpGained / ElapsedHours;
         public double JobExpPerHour => SessionJobExpGained / ElapsedHours;
 
-        public TimeSpan? TimeToNextBaseLevel
+        public TimeSpan? TimeToNextBaseLevel => CalculateTtl(CurrentBaseExp, MaxBaseExp, BaseExpPerHour);
+        public TimeSpan? TimeToNextJobLevel => CalculateTtl(CurrentJobExp, MaxJobExp, JobExpPerHour);
+
+        private static TimeSpan? CalculateTtl(long currentExp, long maxExp, double expPerHour)
         {
-            get
-            {
-                if (MaxBaseExp <= 0 || CurrentBaseExp < 0 || BaseExpPerHour <= 0) return null;
-                long expRemaining = MaxBaseExp - CurrentBaseExp;
-                if (expRemaining <= 0) return TimeSpan.Zero;
+            if (maxExp <= 0 || currentExp < 0 || expPerHour <= 0) return null;
+            long expRemaining = maxExp - currentExp;
+            if (expRemaining <= 0) return TimeSpan.Zero;
 
-                double hours = expRemaining / BaseExpPerHour;
-                if (double.IsInfinity(hours) || double.IsNaN(hours) || hours > 999) return null;
-                return TimeSpan.FromHours(hours);
-            }
-        }
-
-        public TimeSpan? TimeToNextJobLevel
-        {
-            get
-            {
-                if (MaxJobExp <= 0 || CurrentJobExp < 0 || JobExpPerHour <= 0) return null;
-                long expRemaining = MaxJobExp - CurrentJobExp;
-                if (expRemaining <= 0) return TimeSpan.Zero;
-
-                double hours = expRemaining / JobExpPerHour;
-                if (double.IsInfinity(hours) || double.IsNaN(hours) || hours > 999) return null;
-                return TimeSpan.FromHours(hours);
-            }
+            double hours = expRemaining / expPerHour;
+            if (double.IsInfinity(hours) || double.IsNaN(hours) || hours > 999) return null;
+            return TimeSpan.FromHours(hours);
         }
 
         public static string FormatExp(double exp)

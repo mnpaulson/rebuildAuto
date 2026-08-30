@@ -32,6 +32,7 @@ namespace RebuildBotPlugin
         public Dictionary<string, string> ItemRules { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public int ReturnToBaseWeightPercent { get; set; } = 90;
         public bool AutoReturnToBaseOnWeight { get; set; } = true;
+        public bool AutoReturnOnOutOfHpItems { get; set; } = true;
         public bool AutoRestock { get; set; } = true;
         public bool AutoRestockOnLowSupplies { get; set; } = true;
         public Dictionary<string, int> RestockTargets { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
@@ -59,6 +60,10 @@ namespace RebuildBotPlugin
         public List<string> LootItemWhitelist { get; set; } = new List<string>();
         public List<string> LootItemBlacklist { get; set; } = new List<string>();
         public List<RebuildBotPlugin.Models.SkillRule> SkillRules { get; set; } = new List<RebuildBotPlugin.Models.SkillRule>();
+        public bool AutoStatAllocation { get; set; } = true;
+        public List<RebuildBotPlugin.Models.StatBuildGoal> StatBuildPlan { get; set; } = new List<RebuildBotPlugin.Models.StatBuildGoal>();
+        public bool AutoSkillAllocation { get; set; } = true;
+        public List<RebuildBotPlugin.Models.SkillBuildGoal> SkillBuildPlan { get; set; } = new List<RebuildBotPlugin.Models.SkillBuildGoal>();
     }
 
     public static class BotConfigManager

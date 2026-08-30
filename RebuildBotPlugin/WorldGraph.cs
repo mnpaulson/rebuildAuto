@@ -29,10 +29,6 @@ namespace RebuildBotPlugin
 
         public Dictionary<string, List<WarpConnection>> MapNodes = new Dictionary<string, List<WarpConnection>>(StringComparer.OrdinalIgnoreCase);
 
-        private static readonly Regex WarpRegex = new Regex(
-            @"Warp\s*\(\s*""([^""]+)""\s*,\s*""([^""]+)""\s*,\s*(?:""[^""]*""\s*,\s*)?(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*""([^""]+)""\s*,\s*(\d+)\s*,\s*(\d+)\s*\)",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
 #pragma warning disable CS0649
         private class EmbeddedWarpEntry
         {
@@ -111,67 +107,6 @@ namespace RebuildBotPlugin
                 count++;
             }
             Debug.Log($"[WorldGraph] Successfully loaded {count} embedded warp portals across {MapNodes.Count} maps.");
-        }
-
-        public void LoadWarpDirectory(string dirPath)
-        {
-            if (!Directory.Exists(dirPath))
-            {
-                Debug.LogWarning($"[WorldGraph] Directory not found: {dirPath}");
-                return;
-            }
-
-            var files = Directory.GetFiles(dirPath, "*.txt", SearchOption.AllDirectories);
-            int count = 0;
-            foreach (var file in files)
-            {
-                string text = File.ReadAllText(file);
-                count += ParseWarpText(text);
-            }
-            Debug.Log($"[WorldGraph] Loaded {count} warp portal connections across {MapNodes.Count} maps.");
-        }
-
-        public int ParseWarpText(string text)
-        {
-            var matches = WarpRegex.Matches(text);
-            int added = 0;
-            foreach (Match match in matches)
-            {
-                try
-                {
-                    string fromMap = match.Groups[1].Value;
-                    int fromX = int.Parse(match.Groups[3].Value);
-                    int fromY = int.Parse(match.Groups[4].Value);
-                    int width = int.Parse(match.Groups[5].Value);
-                    int height = int.Parse(match.Groups[6].Value);
-                    string destMap = match.Groups[7].Value;
-                    int destX = int.Parse(match.Groups[8].Value);
-                    int destY = int.Parse(match.Groups[9].Value);
-
-                    var warp = new WarpConnection
-                    {
-                        FromMap = fromMap,
-                        FromPos = new Vector2Int(fromX, fromY),
-                        Width = width,
-                        Height = height,
-                        DestMap = destMap,
-                        DestPos = new Vector2Int(destX, destY)
-                    };
-
-                    if (!MapNodes.TryGetValue(fromMap, out var list))
-                    {
-                        list = new List<WarpConnection>();
-                        MapNodes[fromMap] = list;
-                    }
-                    list.Add(warp);
-                    added++;
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"[WorldGraph] Failed to parse warp line '{match.Value}': {ex.Message}");
-                }
-            }
-            return added;
         }
 
         public void BakeKafraTeleports()

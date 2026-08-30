@@ -17,6 +17,7 @@ namespace RebuildBotPlugin.Controllers
 
         private readonly Dictionary<int, LootAttemptInfo> lootAttempts = new Dictionary<int, LootAttemptInfo>();
         public int PendingLootItemId { get; set; } = -1;
+        public int LootCount { get; set; } = 0;
 
         public void Clear()
         {

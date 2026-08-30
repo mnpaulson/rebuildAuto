@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Assets.Scripts.Network;
 using Assets.Scripts.PlayerControl;
 using Assets.Scripts.UI.Hud;
+using RebuildBotPlugin.Services;
 using RebuildSharedData.Data;
 using RebuildSharedData.Enum;
 using UnityEngine;
@@ -30,35 +31,7 @@ namespace RebuildBotPlugin.Controllers
         {
             int primaryId = BotConfigManager.Current.FlyWingItemId;
             const int noviceFlyWingId = 12323;
-
-            var playerState = PlayerState.Instance;
-            if (playerState != null && playerState.Inventory != null)
-            {
-                var invData = playerState.Inventory.GetInventoryData();
-                if (invData != null)
-                {
-                    bool hasPrimary = false;
-                    bool hasNovice = false;
-
-                    foreach (var kvp in invData)
-                    {
-                        var item = kvp.Value;
-                        if (item.ItemData != null && item.Count > 0)
-                        {
-                            if (item.ItemData.Id == primaryId)
-                                hasPrimary = true;
-                            if (item.ItemData.Id == noviceFlyWingId)
-                                hasNovice = true;
-                        }
-                    }
-
-                    if (hasPrimary) return primaryId;
-                    if (hasNovice) return noviceFlyWingId;
-                    return -1; // Out of wings!
-                }
-            }
-
-            return primaryId;
+            return InventoryHelper.FindFirstItemId(primaryId, noviceFlyWingId);
         }
 
         public bool GetBestAvailableHpPotion(out int selectedPotionId, out int totalPotionCount)
@@ -66,10 +39,7 @@ namespace RebuildBotPlugin.Controllers
             selectedPotionId = -1;
             totalPotionCount = 0;
 
-            var playerState = PlayerState.Instance;
-            if (playerState == null || playerState.Inventory == null) return false;
-            var invData = playerState.Inventory.GetInventoryData();
-            if (invData == null) return false;
+            if (!InventoryHelper.TryGetInventoryData(out var invData)) return false;
 
             var enabledIds = BotConfigManager.Current.HpPotionItemIds;
             if (enabledIds == null || enabledIds.Count == 0) return false;
@@ -117,9 +87,30 @@ namespace RebuildBotPlugin.Controllers
         {
             if (StatusEffectPanel.Instance != null && StatusEffectPanel.Instance.StatusEffectLookup != null)
             {
-                return StatusEffectPanel.Instance.StatusEffectLookup.ContainsKey(CharacterStatusEffect.IncreasedAttackSpeed);
+                if (StatusEffectPanel.Instance.StatusEffectLookup.TryGetValue(CharacterStatusEffect.IncreasedAttackSpeed, out var entry))
+                {
+                    if (entry != null && !entry.IsExpired)
+                        return true;
+                }
             }
             return false;
+        }
+
+        public static bool IsInTargetMap(NetworkManager netManager)
+        {
+            if (netManager == null) return false;
+            string currentMap = netManager.CurrentMap;
+            if (string.IsNullOrEmpty(currentMap)) return false;
+
+            if (TownRoutineController.IsTownMap(currentMap)) return false;
+
+            string targetMap = (BotConfigManager.Current.TargetMap ?? "").Trim();
+            if (!string.IsNullOrEmpty(targetMap))
+            {
+                return string.Equals(currentMap, targetMap, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return true;
         }
 
         public bool CanUseAwakeningPotion(int level, int jobId)
@@ -140,9 +131,8 @@ namespace RebuildBotPlugin.Controllers
             selectedPotionName = "";
 
             var playerState = PlayerState.Instance;
-            if (playerState == null || playerState.Inventory == null) return false;
-            var invData = playerState.Inventory.GetInventoryData();
-            if (invData == null) return false;
+            if (playerState == null) return false;
+            if (!InventoryHelper.TryGetInventoryData(out var invData)) return false;
 
             int berserkCount = 0;
             int awakeningCount = 0;
@@ -226,14 +216,16 @@ namespace RebuildBotPlugin.Controllers
         public bool TryUseAspdPotion(NetworkManager netManager, float now)
         {
             if (!BotConfigManager.Current.AutoAspdPotion) return false;
-            if (now - lastAspdPotionTime < 3.0f) return false; // Cooldown between potion use attempts
+            if (BotEngine.Instance != null && BotEngine.Instance.TownRoutine != null && BotEngine.Instance.TownRoutine.IsActive) return false;
+            if (!IsInTargetMap(netManager)) return false;
+            if (now - lastAspdPotionTime < 1.0f) return false;
             if (HasAspdBuffActive()) return false;
 
             if (GetBestAvailableAspdPotion(out int potionId, out string potionName))
             {
                 netManager.SendUseItem(potionId);
                 lastAspdPotionTime = now;
-                BotEngine.Instance?.LogEvent($"[Survival] Used {potionName} (ID: {potionId}) for ASPD boost.");
+                BotEngine.Instance?.LogEvent($"[Survival] Used {potionName} (ID: {potionId}) for ASPD boost on '{netManager.CurrentMap}'.");
                 return true;
             }
 
@@ -243,21 +235,16 @@ namespace RebuildBotPlugin.Controllers
         public List<(int itemId, string name, int count, bool isUsable)> GetInventoryPotionItems()
         {
             var list = new List<(int itemId, string name, int count, bool isUsable)>();
-            var playerState = PlayerState.Instance;
-            if (playerState != null && playerState.Inventory != null)
+            if (InventoryHelper.TryGetInventoryData(out var invData))
             {
-                var invData = playerState.Inventory.GetInventoryData();
-                if (invData != null)
+                foreach (var kvp in invData)
                 {
-                    foreach (var kvp in invData)
+                    var item = kvp.Value;
+                    if (item.ItemData != null && item.Count > 0)
                     {
-                        var item = kvp.Value;
-                        if (item.ItemData != null && item.Count > 0)
-                        {
-                            bool isUsable = item.ItemData.ItemClass == ItemClass.Useable ||
-                                           item.ItemData.UseType != ItemUseType.NotUsable;
-                            list.Add((item.ItemData.Id, item.ItemData.Name, item.Count, isUsable));
-                        }
+                        bool isUsable = item.ItemData.ItemClass == ItemClass.Useable ||
+                                       item.ItemData.UseType != ItemUseType.NotUsable;
+                        list.Add((item.ItemData.Id, item.ItemData.Name, item.Count, isUsable));
                     }
                 }
             }
@@ -342,6 +329,9 @@ namespace RebuildBotPlugin.Controllers
                     }
                 }
             }
+
+            // 1.5. Auto-ASPD Potion Check (Refreshes immediately upon expiration on target map)
+            TryUseAspdPotion(netManager, now);
 
             // 2. Emergency Fly Wing Check (Low HP Escape)
             if (BotConfigManager.Current.EmergencyFlyWingOnLowHp && player.MaxHp > 0)

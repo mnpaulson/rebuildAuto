@@ -43,17 +43,7 @@ namespace RebuildBotPlugin
         public MinimapMarkerController MinimapMarker { get; } = new MinimapMarkerController();
         public ExpTracker ExpTracker { get; } = new ExpTracker();
         public SkillController Skills { get; } = new SkillController();
-
-        // Backward-compatible properties forwarded to controllers
-        public string CurrentTargetName => Combat.CurrentTargetName;
-        public int CurrentTargetHp => Combat.CurrentTargetHp;
-        public int CurrentTargetMaxHp => Combat.CurrentTargetMaxHp;
-        public int KillCount { get => Combat.KillCount; set => Combat.KillCount = value; }
-        public int LootCount = 0;
-
-        public Vector2Int CurrentExplorationWaypoint => Navigation.CurrentExplorationWaypoint;
-        public float WaypointAssignedTime => Navigation.WaypointAssignedTime;
-        public Vector2 LastWanderHeading => Navigation.LastWanderHeading;
+        public ProgressionController Progression { get; } = new ProgressionController();
 
         private float deathTimestamp = 0f;
         private float lastRespawnTime = 0f;
@@ -73,13 +63,7 @@ namespace RebuildBotPlugin
             LogEvent("Bot engine initialized (modular architecture).");
         }
 
-        public void RegisterAttacker(int monsterId) => Targeting.RegisterAttacker(monsterId);
-        public ServerControllable GetAttackingMonster(Vector2Int playerPos) => Targeting.GetAttackingMonster(playerPos);
-        public List<string> GetActiveMonstersOnMap() => Targeting.GetActiveMonstersOnMap();
         public string GetCurrentMapName() => NetworkManager.Instance?.CurrentMap ?? "";
-        public List<(int itemId, string name, int count, bool isUsable)> GetInventoryPotionItems() => Survival.GetInventoryPotionItems();
-        public bool SafeMoveTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals = false, bool forwardOnly = false)
-            => Navigation.SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly);
 
         public Vector2Int GetPlayerPosition()
         {
@@ -132,10 +116,16 @@ namespace RebuildBotPlugin
         {
             if (!BotConfigManager.Current.Enabled)
             {
+                if (wasBotEnabled)
+                {
+                    Services.NpcInteractionHelper.CleanupNpcUi();
+                    Navigation.ResetWander();
+                    wasBotEnabled = false;
+                }
                 CurrentState = BotState.Disabled;
-                wasBotEnabled = false;
                 return;
             }
+            wasBotEnabled = true;
 
             var netManager = NetworkManager.Instance;
             if (netManager == null || netManager.EntityList == null ||
@@ -216,6 +206,9 @@ namespace RebuildBotPlugin
 
             float now = Time.time;
 
+            // Character Auto-Progression (Stat & Skill Point Allocation)
+            Progression.ProcessProgression(netManager, player, now);
+
             // Cleanup temporary loot blacklists
             Loot.CleanupLootAttempts(now);
 
@@ -286,7 +279,7 @@ namespace RebuildBotPlugin
             }
 
             // PRIORITY 4: CROSS-MAP TRAVEL TO TARGET MAP (AutoTravel)
-            if (!TownRoutine.IsActive && (now - TownRoutine.LastCompletedTime >= 2.5f) && Navigation.ProcessTravel(netManager, player, now, ref CurrentState))
+            if (!TownRoutine.IsActive && Navigation.ProcessTravel(netManager, player, now, ref CurrentState))
             {
                 return;
             }
@@ -298,8 +291,8 @@ namespace RebuildBotPlugin
                 {
                     if (netManager.GroundItemList == null || !netManager.GroundItemList.ContainsKey(Loot.PendingLootItemId))
                     {
-                        LootCount++;
-                        LogEvent($"Collected loot item! Total Loot: {LootCount}");
+                        Loot.LootCount++;
+                        LogEvent($"Collected loot item! Total Loot: {Loot.LootCount}");
                         Loot.PendingLootItemId = -1;
                     }
                 }

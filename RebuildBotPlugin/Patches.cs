@@ -40,7 +40,7 @@ namespace RebuildBotPlugin
         {
             if (src != null && target != null && NetworkManager.Instance != null && target.Id == NetworkManager.Instance.PlayerId)
             {
-                BotEngine.Instance?.RegisterAttacker(src.Id);
+                BotEngine.Instance?.Targeting.RegisterAttacker(src.Id);
             }
         }
     }

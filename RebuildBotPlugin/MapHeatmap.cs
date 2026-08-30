@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Assets.Scripts.MapEditor;
 using UnityEngine;
 
 namespace RebuildBotPlugin
@@ -12,8 +13,8 @@ namespace RebuildBotPlugin
         public string CurrentMap = "";
 
         // Key: (sectorX, sectorY) -> float LastVisitedTimestamp
-        private Dictionary<Vector2Int, float> sectorVisits = new Dictionary<Vector2Int, float>();
-        private Dictionary<Vector2Int, float> unreachableSectors = new Dictionary<Vector2Int, float>();
+        private readonly Dictionary<Vector2Int, float> sectorVisits = new Dictionary<Vector2Int, float>();
+        private readonly Dictionary<Vector2Int, float> unreachableSectors = new Dictionary<Vector2Int, float>();
 
         public void Clear()
         {
@@ -22,7 +23,7 @@ namespace RebuildBotPlugin
             CurrentMap = "";
         }
 
-        public void BlacklistSector(Vector2Int cellPos, float durationSeconds = 30f)
+        public void BlacklistSector(Vector2Int cellPos, float durationSeconds = BotConstants.SectorBlacklistDuration)
         {
             Vector2Int sectorKey = GetSectorKey(cellPos);
             unreachableSectors[sectorKey] = Time.time + durationSeconds;
@@ -68,22 +69,42 @@ namespace RebuildBotPlugin
         {
             UpdatePlayerPosition(map, playerCellPos);
 
-            Vector2Int playerSector = GetSectorKey(playerCellPos);
+            var candidates = ScoreCandidateSectors(map, playerCellPos, portalSafetyRadius, currentHeading, addRandomJitter: true);
 
-            int mapWidth = 300;
-            int mapHeight = 300;
-
-            var walkProvider = Assets.Scripts.MapEditor.RoWalkDataProvider.Instance;
-            if (walkProvider != null && walkProvider.WalkData != null)
+            Vector2Int chosenSector;
+            if (candidates.Count > 0)
             {
-                mapWidth = walkProvider.WalkData.Width;
-                mapHeight = walkProvider.WalkData.Height;
+                // Pick from top 2 candidates
+                int pickIndex = UnityEngine.Random.Range(0, Math.Min(2, candidates.Count));
+                chosenSector = candidates[pickIndex].Sector;
+            }
+            else
+            {
+                return FallbackSectorTarget(map, playerCellPos, portalSafetyRadius);
             }
 
-            int maxSectorX = mapWidth / SectorSize;
-            int maxSectorY = mapHeight / SectorSize;
+            // Pick a walkable cell within the selected sector
+            var walkProvider = RoWalkDataProvider.Instance;
+            for (int attempt = 0; attempt < 12; attempt++)
+            {
+                int targetX = chosenSector.x * SectorSize + UnityEngine.Random.Range(2, SectorSize - 2);
+                int targetY = chosenSector.y * SectorSize + UnityEngine.Random.Range(2, SectorSize - 2);
+                Vector2Int candidate = new Vector2Int(targetX, targetY);
 
-            List<(Vector2Int sector, float score)> candidateSectors = new List<(Vector2Int, float)>();
+                if (walkProvider == null || walkProvider.WalkData == null || walkProvider.IsCellWalkable(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return new Vector2Int(chosenSector.x * SectorSize + SectorSize / 2, chosenSector.y * SectorSize + SectorSize / 2);
+        }
+
+        public List<SectorTelemetry> ScoreCandidateSectors(string map, Vector2Int playerCellPos, float portalSafetyRadius, Vector2 currentHeading, bool addRandomJitter = false)
+        {
+            GetSectorGridDimensions(out int maxSectorX, out int maxSectorY);
+            var walkProvider = RoWalkDataProvider.Instance;
+            List<SectorTelemetry> candidates = new List<SectorTelemetry>();
             float now = Time.time;
 
             for (int sx = 0; sx <= maxSectorX; sx++)
@@ -94,25 +115,17 @@ namespace RebuildBotPlugin
                     Vector2Int centerCell = new Vector2Int(sx * SectorSize + SectorSize / 2, sy * SectorSize + SectorSize / 2);
 
                     float dist = Vector2.Distance(playerCellPos, centerCell);
-                    // Disallow immediate sectors: long sweeping wander targets only (at least 35 tiles away)
                     if (dist < 35f) continue;
 
-                    // Skip temporarily blacklisted unreachable sectors
-                    if (unreachableSectors.TryGetValue(sectorKey, out float expireTime) && now < expireTime)
+                    bool isBlacklisted = unreachableSectors.TryGetValue(sectorKey, out float expireTime) && now < expireTime;
+                    if (isBlacklisted) continue;
+
+                    if (walkProvider != null && walkProvider.WalkData != null && !walkProvider.IsCellWalkable(centerCell))
                         continue;
 
-                    // Verify cell walkability if provider is active
-                    if (walkProvider != null && walkProvider.WalkData != null)
-                    {
-                        if (!walkProvider.IsCellWalkable(centerCell))
-                            continue;
-                    }
-
-                    // Must be topologically reachable on the static map (same connected component zone)
                     if (!MapNavMesh.Instance.IsReachable(playerCellPos, centerCell))
                         continue;
 
-                    // Check portal safety
                     if (BotConfigManager.Current.AvoidPortalsWhileWandering &&
                         WorldGraph.Instance.IsNearPortal(map, centerCell, portalSafetyRadius))
                     {
@@ -121,65 +134,44 @@ namespace RebuildBotPlugin
 
                     bool isVisited = sectorVisits.TryGetValue(sectorKey, out float ts);
                     float timeSinceVisit = isVisited ? (now - ts) : 9999f;
-
-                    // Distance sweet-spot bonus: peaks between 50 and 100 tiles
                     float distScore = Mathf.Clamp(120f - Mathf.Abs(dist - 75f), 10f, 80f);
 
-                    // Directional momentum bonus
                     float momentumBonus = 0f;
                     if (currentHeading != Vector2.zero)
                     {
                         Vector2 toCandidate = ((Vector2)centerCell - playerCellPos).normalized;
                         float dot = Vector2.Dot(currentHeading, toCandidate);
-                        if (dot >= 0.5f) momentumBonus = 40f;       // Forward cone (within 60 degrees)
-                        else if (dot <= -0.5f) momentumBonus = -60f; // Backwards cone (sharp turn > 120 degrees)
+                        if (dot >= 0.5f) momentumBonus = 40f;
+                        else if (dot <= -0.5f) momentumBonus = -60f;
                     }
 
-                    float score = (Mathf.Min(timeSinceVisit, 300f) * 2.5f) + distScore + momentumBonus + UnityEngine.Random.Range(0f, 15f);
+                    float score = (Mathf.Min(timeSinceVisit, 300f) * 2.5f) + distScore + momentumBonus;
+                    if (addRandomJitter)
+                    {
+                        score += UnityEngine.Random.Range(0f, 15f);
+                    }
 
-                    candidateSectors.Add((sectorKey, score));
+                    candidates.Add(new SectorTelemetry
+                    {
+                        Sector = sectorKey,
+                        CenterCell = centerCell,
+                        LastVisitedAge = timeSinceVisit,
+                        Distance = dist,
+                        Score = score,
+                        IsBlacklisted = isBlacklisted,
+                        IsVisited = isVisited
+                    });
                 }
             }
 
-            Vector2Int chosenSector = playerSector;
-            if (candidateSectors.Count > 0)
-            {
-                candidateSectors.Sort((a, b) => b.score.CompareTo(a.score));
-                // Pick from top 2 candidates
-                int pickIndex = UnityEngine.Random.Range(0, Math.Min(2, candidateSectors.Count));
-                chosenSector = candidateSectors[pickIndex].sector;
-            }
-            else
-            {
-                // Fallback if map is small or all distant sectors blocked: allow closer sectors
-                return FallbackSectorTarget(map, playerCellPos, portalSafetyRadius);
-            }
-
-            // Pick a walkable cell within the selected sector
-            for (int attempt = 0; attempt < 12; attempt++)
-            {
-                int targetX = chosenSector.x * SectorSize + UnityEngine.Random.Range(2, SectorSize - 2);
-                int targetY = chosenSector.y * SectorSize + UnityEngine.Random.Range(2, SectorSize - 2);
-                Vector2Int candidate = new Vector2Int(targetX, targetY);
-
-                if (walkProvider != null && walkProvider.WalkData != null)
-                {
-                    if (walkProvider.IsCellWalkable(candidate))
-                        return candidate;
-                }
-                else
-                {
-                    return candidate;
-                }
-            }
-
-            return new Vector2Int(chosenSector.x * SectorSize + SectorSize / 2, chosenSector.y * SectorSize + SectorSize / 2);
+            candidates.Sort((a, b) => b.Score.CompareTo(a.Score));
+            return candidates;
         }
 
         private Vector2Int FallbackSectorTarget(string map, Vector2Int playerCellPos, float portalSafetyRadius)
         {
             GetSectorGridDimensions(out int maxSectorX, out int maxSectorY);
-            var walkProvider = Assets.Scripts.MapEditor.RoWalkDataProvider.Instance;
+            var walkProvider = RoWalkDataProvider.Instance;
             float bestScore = float.MinValue;
             Vector2Int bestSector = GetSectorKey(playerCellPos);
 
@@ -224,7 +216,7 @@ namespace RebuildBotPlugin
             int mapWidth = 300;
             int mapHeight = 300;
 
-            var walkProvider = Assets.Scripts.MapEditor.RoWalkDataProvider.Instance;
+            var walkProvider = RoWalkDataProvider.Instance;
             if (walkProvider != null && walkProvider.WalkData != null)
             {
                 mapWidth = walkProvider.WalkData.Width;
@@ -247,67 +239,7 @@ namespace RebuildBotPlugin
 
         public List<SectorTelemetry> GetTopCandidateSectors(string map, Vector2Int playerCellPos, float portalSafetyRadius = 5.0f, int count = 5, Vector2 currentHeading = default)
         {
-            GetSectorGridDimensions(out int maxSectorX, out int maxSectorY);
-            var walkProvider = Assets.Scripts.MapEditor.RoWalkDataProvider.Instance;
-            List<SectorTelemetry> candidates = new List<SectorTelemetry>();
-            float now = Time.time;
-
-            for (int sx = 0; sx <= maxSectorX; sx++)
-            {
-                for (int sy = 0; sy <= maxSectorY; sy++)
-                {
-                    Vector2Int sectorKey = new Vector2Int(sx, sy);
-                    Vector2Int centerCell = new Vector2Int(sx * SectorSize + SectorSize / 2, sy * SectorSize + SectorSize / 2);
-
-                    float dist = Vector2.Distance(playerCellPos, centerCell);
-                    if (dist < 35f) continue;
-
-                    bool isBlacklisted = unreachableSectors.TryGetValue(sectorKey, out float expireTime) && now < expireTime;
-                    if (isBlacklisted) continue;
-
-                    if (walkProvider != null && walkProvider.WalkData != null)
-                    {
-                        if (!walkProvider.IsCellWalkable(centerCell)) continue;
-                    }
-
-                    if (!MapNavMesh.Instance.IsReachable(playerCellPos, centerCell))
-                        continue;
-
-                    if (BotConfigManager.Current.AvoidPortalsWhileWandering &&
-                        WorldGraph.Instance.IsNearPortal(map, centerCell, portalSafetyRadius))
-                    {
-                        continue;
-                    }
-
-                    bool isVisited = sectorVisits.TryGetValue(sectorKey, out float ts);
-                    float timeSinceVisit = isVisited ? (now - ts) : 9999f;
-                    float distScore = Mathf.Clamp(120f - Mathf.Abs(dist - 75f), 10f, 80f);
-
-                    float momentumBonus = 0f;
-                    if (currentHeading != Vector2.zero)
-                    {
-                        Vector2 toCandidate = ((Vector2)centerCell - playerCellPos).normalized;
-                        float dot = Vector2.Dot(currentHeading, toCandidate);
-                        if (dot >= 0.5f) momentumBonus = 40f;
-                        else if (dot <= -0.5f) momentumBonus = -60f;
-                    }
-
-                    float score = (Mathf.Min(timeSinceVisit, 300f) * 2.5f) + distScore + momentumBonus;
-
-                    candidates.Add(new SectorTelemetry
-                    {
-                        Sector = sectorKey,
-                        CenterCell = centerCell,
-                        LastVisitedAge = timeSinceVisit,
-                        Distance = dist,
-                        Score = score,
-                        IsBlacklisted = isBlacklisted,
-                        IsVisited = isVisited
-                    });
-                }
-            }
-
-            candidates.Sort((a, b) => b.Score.CompareTo(a.Score));
+            var candidates = ScoreCandidateSectors(map, playerCellPos, portalSafetyRadius, currentHeading, addRandomJitter: false);
             if (candidates.Count > count)
             {
                 candidates.RemoveRange(count, candidates.Count - count);

@@ -4,6 +4,7 @@ using Assets.Scripts;
 using Assets.Scripts.Network;
 using Assets.Scripts.PlayerControl;
 using Assets.Scripts.UI;
+using RebuildBotPlugin.Services;
 using RebuildSharedData.Data;
 using RebuildSharedData.Enum;
 using RebuildSharedData.Networking;
@@ -50,18 +51,15 @@ namespace RebuildBotPlugin.Controllers
         public static readonly Vector2Int KafraPosition = new Vector2Int(158, 362);
         public const string BaseMap = "prt_fild08";
 
+        // Normalized canonical dictionary - space and underscore aliases are resolved via TryGetRestockItem
         public static readonly Dictionary<string, RestockItemDefinition> KnownRestockItems = new(StringComparer.OrdinalIgnoreCase)
         {
             // General Vendor (151, 347)
             ["Fly_Wing"] = new RestockItemDefinition { CanonicalName = "Fly_Wing", ItemId = 601, Vendor = RestockVendorType.GeneralVendor, EquivalentItemIds = new List<int> { 601, 12323 } },
-            ["Fly Wing"] = new RestockItemDefinition { CanonicalName = "Fly_Wing", ItemId = 601, Vendor = RestockVendorType.GeneralVendor, EquivalentItemIds = new List<int> { 601, 12323 } },
             ["Butterfly_Wing"] = new RestockItemDefinition { CanonicalName = "Butterfly_Wing", ItemId = 602, Vendor = RestockVendorType.GeneralVendor, EquivalentItemIds = new List<int> { 602, 12324 } },
-            ["Butterfly Wing"] = new RestockItemDefinition { CanonicalName = "Butterfly_Wing", ItemId = 602, Vendor = RestockVendorType.GeneralVendor, EquivalentItemIds = new List<int> { 602, 12324 } },
             ["Arrow"] = new RestockItemDefinition { CanonicalName = "Arrow", ItemId = 1750, Vendor = RestockVendorType.GeneralVendor },
             ["Silver_Arrow"] = new RestockItemDefinition { CanonicalName = "Silver_Arrow", ItemId = 1751, Vendor = RestockVendorType.GeneralVendor },
-            ["Silver Arrow"] = new RestockItemDefinition { CanonicalName = "Silver_Arrow", ItemId = 1751, Vendor = RestockVendorType.GeneralVendor },
             ["Fire_Arrow"] = new RestockItemDefinition { CanonicalName = "Fire_Arrow", ItemId = 1752, Vendor = RestockVendorType.GeneralVendor },
-            ["Fire Arrow"] = new RestockItemDefinition { CanonicalName = "Fire_Arrow", ItemId = 1752, Vendor = RestockVendorType.GeneralVendor },
             ["Trap"] = new RestockItemDefinition { CanonicalName = "Trap", ItemId = 1065, Vendor = RestockVendorType.GeneralVendor },
 
             // Ranch Vendor (150, 350)
@@ -75,22 +73,22 @@ namespace RebuildBotPlugin.Controllers
 
             // Diligent Alchemist (145, 346)
             ["Red_Potion"] = new RestockItemDefinition { CanonicalName = "Red_Potion", ItemId = 501, Vendor = RestockVendorType.AlchemistVendor },
-            ["Red Potion"] = new RestockItemDefinition { CanonicalName = "Red_Potion", ItemId = 501, Vendor = RestockVendorType.AlchemistVendor },
             ["Orange_Potion"] = new RestockItemDefinition { CanonicalName = "Orange_Potion", ItemId = 502, Vendor = RestockVendorType.AlchemistVendor },
-            ["Orange Potion"] = new RestockItemDefinition { CanonicalName = "Orange_Potion", ItemId = 502, Vendor = RestockVendorType.AlchemistVendor },
             ["Yellow_Potion"] = new RestockItemDefinition { CanonicalName = "Yellow_Potion", ItemId = 503, Vendor = RestockVendorType.AlchemistVendor },
-            ["Yellow Potion"] = new RestockItemDefinition { CanonicalName = "Yellow_Potion", ItemId = 503, Vendor = RestockVendorType.AlchemistVendor },
             ["White_Potion"] = new RestockItemDefinition { CanonicalName = "White_Potion", ItemId = 504, Vendor = RestockVendorType.AlchemistVendor },
-            ["White Potion"] = new RestockItemDefinition { CanonicalName = "White_Potion", ItemId = 504, Vendor = RestockVendorType.AlchemistVendor },
             ["Green_Potion"] = new RestockItemDefinition { CanonicalName = "Green_Potion", ItemId = 506, Vendor = RestockVendorType.AlchemistVendor },
-            ["Green Potion"] = new RestockItemDefinition { CanonicalName = "Green_Potion", ItemId = 506, Vendor = RestockVendorType.AlchemistVendor },
             ["Concentration_Potion"] = new RestockItemDefinition { CanonicalName = "Concentration_Potion", ItemId = 645, Vendor = RestockVendorType.AlchemistVendor },
-            ["Concentration Potion"] = new RestockItemDefinition { CanonicalName = "Concentration_Potion", ItemId = 645, Vendor = RestockVendorType.AlchemistVendor },
             ["Awakening_Potion"] = new RestockItemDefinition { CanonicalName = "Awakening_Potion", ItemId = 656, Vendor = RestockVendorType.AlchemistVendor },
-            ["Awakening Potion"] = new RestockItemDefinition { CanonicalName = "Awakening_Potion", ItemId = 656, Vendor = RestockVendorType.AlchemistVendor },
             ["Berserk_Potion"] = new RestockItemDefinition { CanonicalName = "Berserk_Potion", ItemId = 657, Vendor = RestockVendorType.AlchemistVendor },
-            ["Berserk Potion"] = new RestockItemDefinition { CanonicalName = "Berserk_Potion", ItemId = 657, Vendor = RestockVendorType.AlchemistVendor },
         };
+
+        public static bool TryGetRestockItem(string key, out RestockItemDefinition def)
+        {
+            def = null;
+            if (string.IsNullOrWhiteSpace(key)) return false;
+            string normalized = key.Trim().Replace(" ", "_");
+            return KnownRestockItems.TryGetValue(normalized, out def);
+        }
 
         private TownRoutineState currentState = TownRoutineState.Idle;
         private float stateStartTime = 0f;
@@ -99,6 +97,7 @@ namespace RebuildBotPlugin.Controllers
         private float targetStopDistance = 0f;
         private bool usedWingThisRoutine = false;
         private float lastCompletedTime = 0f;
+        private readonly NpcInteractionHelper npcHelper = new();
 
         public TownRoutineState CurrentState => currentState;
         public bool IsActive => currentState != TownRoutineState.Idle;
@@ -112,6 +111,7 @@ namespace RebuildBotPlugin.Controllers
             stepPhase = 0;
             usedWingThisRoutine = false;
             targetStopDistance = 0f;
+            npcHelper.Reset();
             BotEngine.Instance?.LogEvent($"[Town Routine] {reason} triggered. Initiating return to prt_fild08.");
         }
 
@@ -122,6 +122,7 @@ namespace RebuildBotPlugin.Controllers
                 currentState = TownRoutineState.Idle;
                 stepPhase = 0;
                 usedWingThisRoutine = false;
+                npcHelper.Reset();
                 CloseOpenShopUI();
                 CloseOpenStorageUI();
                 BotEngine.Instance?.LogEvent("[Town Routine] Routine cancelled.");
@@ -166,9 +167,7 @@ namespace RebuildBotPlugin.Controllers
 
         public static bool HasItemsToSell()
         {
-            var state = PlayerState.Instance;
-            var inv = state?.Inventory?.GetInventoryData();
-            if (inv == null) return false;
+            if (!InventoryHelper.TryGetInventoryData(out var inv)) return false;
             foreach (var kvp in inv)
             {
                 var item = kvp.Value;
@@ -180,9 +179,7 @@ namespace RebuildBotPlugin.Controllers
 
         public static bool HasItemsToStore()
         {
-            var state = PlayerState.Instance;
-            var inv = state?.Inventory?.GetInventoryData();
-            if (inv == null) return false;
+            if (!InventoryHelper.TryGetInventoryData(out var inv)) return false;
             foreach (var kvp in inv)
             {
                 var item = kvp.Value;
@@ -198,9 +195,7 @@ namespace RebuildBotPlugin.Controllers
             if (!BotConfigManager.Current.AutoRestock || BotConfigManager.Current.RestockTargets == null)
                 return result;
 
-            var state = PlayerState.Instance;
-            var inv = state?.Inventory?.GetInventoryData();
-
+            InventoryHelper.TryGetInventoryData(out var inv);
             var processedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var kvp in BotConfigManager.Current.RestockTargets)
@@ -209,7 +204,7 @@ namespace RebuildBotPlugin.Controllers
                 int targetCount = kvp.Value;
                 if (targetCount <= 0) continue;
 
-                if (!KnownRestockItems.TryGetValue(key, out var def))
+                if (!TryGetRestockItem(key, out var def))
                     continue;
 
                 if (def.Vendor != vendor)
@@ -253,43 +248,62 @@ namespace RebuildBotPlugin.Controllers
                    GetItemsToPurchaseFromVendor(RestockVendorType.AlchemistVendor).Count > 0;
         }
 
+        public static bool HasDepletedHpItems()
+        {
+            if (!BotConfigManager.Current.AutoReturnOnOutOfHpItems)
+                return false;
+
+            var hpItemIds = BotConfigManager.Current.HpPotionItemIds;
+            if (hpItemIds == null || hpItemIds.Count == 0)
+                return false;
+
+            if (!InventoryHelper.TryGetInventoryData(out var inv) || inv == null)
+                return false;
+
+            int totalHpItems = 0;
+            foreach (var kvp in inv)
+            {
+                if (hpItemIds.Contains(kvp.Value.Id))
+                {
+                    totalHpItems += kvp.Value.Count;
+                }
+            }
+
+            return totalHpItems == 0;
+        }
+
         public static bool HasDepletedEssentialSupplies()
         {
             if (!BotConfigManager.Current.AutoRestock || !BotConfigManager.Current.AutoRestockOnLowSupplies || BotConfigManager.Current.RestockTargets == null)
                 return false;
 
-            var state = PlayerState.Instance;
-            var inv = state?.Inventory?.GetInventoryData();
+            InventoryHelper.TryGetInventoryData(out var inv);
 
             // Check Fly Wings
-            if (BotConfigManager.Current.RestockTargets.TryGetValue("Fly_Wing", out int flyTarget) ||
-                BotConfigManager.Current.RestockTargets.TryGetValue("Fly Wing", out flyTarget))
+            if (TryGetRestockCount("Fly_Wing", out int flyTarget) && flyTarget > 0)
             {
-                if (flyTarget > 0)
+                int currentFly = 0;
+                if (inv != null)
                 {
-                    int currentFly = 0;
-                    if (inv != null)
+                    foreach (var kvp in inv)
                     {
-                        foreach (var kvp in inv)
-                        {
-                            var item = kvp.Value;
-                            if (item.Id == 601 || item.Id == 12323) currentFly += item.Count;
-                        }
+                        var item = kvp.Value;
+                        if (item.Id == 601 || item.Id == 12323) currentFly += item.Count;
                     }
-                    if (currentFly == 0) return true;
                 }
+                if (currentFly == 0) return true;
             }
 
             // Check HP Potions
             int potionTargetTotal = 0;
             int potionCurrentTotal = 0;
-            string[] potionKeys = { "Red_Potion", "Red Potion", "Orange_Potion", "Orange Potion", "Yellow_Potion", "Yellow Potion", "White_Potion", "White Potion" };
+            string[] potionKeys = { "Red_Potion", "Orange_Potion", "Yellow_Potion", "White_Potion" };
             foreach (var key in potionKeys)
             {
-                if (BotConfigManager.Current.RestockTargets.TryGetValue(key, out int target) && target > 0)
+                if (TryGetRestockCount(key, out int target) && target > 0)
                 {
                     potionTargetTotal += target;
-                    if (KnownRestockItems.TryGetValue(key, out var def) && inv != null)
+                    if (TryGetRestockItem(key, out var def) && inv != null)
                     {
                         foreach (var kvp in inv)
                         {
@@ -305,56 +319,20 @@ namespace RebuildBotPlugin.Controllers
             return false;
         }
 
-        public int GetAvailableButterflyWingId()
+        private static bool TryGetRestockCount(string key, out int targetCount)
         {
-            var playerState = PlayerState.Instance;
-            if (playerState?.Inventory == null) return -1;
-            var invData = playerState.Inventory.GetInventoryData();
-            if (invData == null) return -1;
+            targetCount = 0;
+            if (BotConfigManager.Current.RestockTargets == null) return false;
 
-            bool hasStandard = false;
-            bool hasNovice = false;
-            foreach (var kvp in invData)
-            {
-                var item = kvp.Value;
-                if (item.ItemData != null && item.Count > 0)
-                {
-                    if (item.ItemData.Id == 602) hasStandard = true;
-                    if (item.ItemData.Id == 12324) hasNovice = true;
-                }
-            }
-
-            if (hasStandard) return 602;
-            if (hasNovice) return 12324;
-            return -1;
+            if (BotConfigManager.Current.RestockTargets.TryGetValue(key, out targetCount)) return true;
+            string spaceKey = key.Replace('_', ' ');
+            if (BotConfigManager.Current.RestockTargets.TryGetValue(spaceKey, out targetCount)) return true;
+            return false;
         }
 
-        public ServerControllable FindNearbyNpc(string nameSubstr, Vector2Int expectedPos)
+        public int GetAvailableButterflyWingId()
         {
-            var netManager = NetworkManager.Instance;
-            if (netManager == null || netManager.EntityList == null) return null;
-
-            ServerControllable bestNpc = null;
-            float bestDist = float.MaxValue;
-
-            foreach (var kvp in netManager.EntityList)
-            {
-                var entity = kvp.Value;
-                if (entity == null || entity.CharacterType != CharacterType.NPC) continue;
-
-                float dist = Vector2.Distance(entity.CellPosition, expectedPos);
-                if (dist <= 6.0f)
-                {
-                    bool nameMatches = string.IsNullOrEmpty(nameSubstr) ||
-                                       (!string.IsNullOrEmpty(entity.Name) && entity.Name.IndexOf(nameSubstr, StringComparison.OrdinalIgnoreCase) >= 0);
-                    if (nameMatches && dist < bestDist)
-                    {
-                        bestDist = dist;
-                        bestNpc = entity;
-                    }
-                }
-            }
-            return bestNpc;
+            return InventoryHelper.FindFirstItemId(602, 12324);
         }
 
         private static readonly HashSet<string> TownMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -404,6 +382,13 @@ namespace RebuildBotPlugin.Controllers
                     }
                 }
 
+                // Check depleted HP items trigger
+                if (BotConfigManager.Current.AutoReturnOnOutOfHpItems && !IsTownMap(netManager.CurrentMap) && HasDepletedHpItems())
+                {
+                    StartRoutine("Out of HP items");
+                    return true;
+                }
+
                 // Check depleted supplies trigger
                 if (BotConfigManager.Current.AutoRestockOnLowSupplies && HasDepletedEssentialSupplies())
                 {
@@ -426,7 +411,7 @@ namespace RebuildBotPlugin.Controllers
                         {
                             currentState = TownRoutineState.NavigatingToGeneralVendorSell;
                             stepPhase = 0;
-                            targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
+                            targetStopDistance = UnityEngine.Random.Range(BotConstants.MinStopDistance, BotConstants.MaxStopDistance);
                             BotEngine.Instance?.LogEvent($"[Town Routine] Arrived in prt_fild08. Moving to General Vendor to sell items (target distance: {targetStopDistance:F1} tiles).");
                         }
                         else
@@ -469,7 +454,7 @@ namespace RebuildBotPlugin.Controllers
                         return true;
                     }
 
-                    if (targetStopDistance <= 0f) targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
+                    if (targetStopDistance <= 0f) targetStopDistance = UnityEngine.Random.Range(BotConstants.MinStopDistance, BotConstants.MaxStopDistance);
                     float distToVendor = Vector2.Distance(player.CellPosition, GeneralVendorPosition);
                     if (distToVendor <= targetStopDistance)
                     {
@@ -488,256 +473,28 @@ namespace RebuildBotPlugin.Controllers
                     return true;
 
                 case TownRoutineState.InteractingWithGeneralVendorSell:
-                    if (stepPhase == 0)
-                    {
-                        var vendorNpc = FindNearbyNpc("Vendor", GeneralVendorPosition);
-                        if (vendorNpc != null)
-                        {
-                            netManager.SendNpcClick(vendorNpc.Id);
-                            stepPhase = 1;
-                            lastActionTime = now;
-                        }
-                        else if (now - lastActionTime > 3.0f)
-                        {
-                            AdvanceFromGeneralVendor(now);
-                        }
-                    }
-                    else if (stepPhase == 1 && now - lastActionTime >= 0.4f)
-                    {
-                        netManager.SendNpcSelectOption(1); // Option 1 is "Sell"
-                        stepPhase = 2;
-                        lastActionTime = now;
-                    }
-                    else if (stepPhase == 2 && now - lastActionTime >= 0.5f)
-                    {
-                        var state = PlayerState.Instance;
-                        if (state?.Inventory != null)
-                        {
-                            var inv = state.Inventory.GetInventoryData();
-                            var itemsToSell = new List<(int bagId, int count)>();
-
-                            foreach (var kvp in inv)
-                            {
-                                var item = kvp.Value;
-                                if (item.ItemData != null && item.Count > 0 && GetItemDisposition(item) == "Sell")
-                                {
-                                    itemsToSell.Add((item.BagSlotId, item.Count));
-                                }
-                            }
-
-                            if (itemsToSell.Count > 0)
-                            {
-                                var msg = netManager.StartMessage(PacketType.ShopBuySell);
-                                msg.Write(itemsToSell.Count);
-                                foreach (var (bagId, count) in itemsToSell)
-                                {
-                                    msg.Write(bagId);
-                                    msg.Write(count);
-                                }
-                                netManager.SendMessage(msg);
-                                BotEngine.Instance?.LogEvent($"[Town Routine] Sold {itemsToSell.Count} item stack(s) to General Vendor.");
-                            }
-                            else
-                            {
-                                netManager.SubmitShopPurchase(null);
-                                BotEngine.Instance?.LogEvent("[Town Routine] No items marked for sale.");
-                            }
-
-                            CloseOpenShopUI();
-                        }
-
-                        AdvanceFromGeneralVendor(now);
-                    }
-                    return true;
+                    return ProcessVendorSell(netManager, now);
 
                 case TownRoutineState.BuyingAtGeneralVendor:
-                    if (stepPhase == 0)
-                    {
-                        var vendorNpc = FindNearbyNpc("Vendor", GeneralVendorPosition);
-                        if (vendorNpc != null)
-                        {
-                            netManager.SendNpcClick(vendorNpc.Id);
-                            stepPhase = 1;
-                            lastActionTime = now;
-                        }
-                        else if (now - lastActionTime > 3.0f)
-                        {
-                            AdvanceFromRanchVendor(now);
-                        }
-                    }
-                    else if (stepPhase == 1 && now - lastActionTime >= 0.4f)
-                    {
-                        netManager.SendNpcSelectOption(0); // Option 0 is "Buy"
-                        stepPhase = 2;
-                        lastActionTime = now;
-                    }
-                    else if (stepPhase == 2 && now - lastActionTime >= 0.5f)
-                    {
-                        var buys = GetItemsToPurchaseFromVendor(RestockVendorType.GeneralVendor);
-                        if (buys.Count > 0)
-                        {
-                            var msg = netManager.StartMessage(PacketType.ShopBuySell);
-                            msg.Write(buys.Count);
-                            foreach (var (itemId, count) in buys)
-                            {
-                                msg.Write(itemId);
-                                msg.Write(count);
-                            }
-                            netManager.SendMessage(msg);
-                            BotEngine.Instance?.LogEvent($"[Town Routine] Purchased {buys.Count} item type(s) from General Vendor.");
-                        }
-                        else
-                        {
-                            netManager.SubmitShopPurchase(null);
-                        }
-
-                        CloseOpenShopUI();
-                        AdvanceFromRanchVendor(now);
-                    }
-                    return true;
+                    return ProcessVendorBuy(netManager, RestockVendorType.GeneralVendor, "Vendor", GeneralVendorPosition, () => AdvanceFromRanchVendor(now), now);
 
                 case TownRoutineState.NavigatingToRanchVendor:
-                    if (targetStopDistance <= 0f) targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
-                    float distToRanch = Vector2.Distance(player.CellPosition, RanchVendorPosition);
-                    if (distToRanch <= targetStopDistance)
-                    {
-                        currentState = TownRoutineState.BuyingAtRanchVendor;
-                        stepPhase = 0;
-                        lastActionTime = now;
-                        BotEngine.Instance?.LogEvent($"[Town Routine] Reached Ranch Vendor (dist: {distToRanch:F1} tiles). Opening shop.");
-                        return true;
-                    }
-
-                    if (!player.IsMoving && now - lastActionTime >= 0.3f)
-                    {
-                        navigation.NavigateTowards(player.CellPosition, RanchVendorPosition, avoidPortals: false, hopDistance: 11);
-                        lastActionTime = now;
-                    }
-                    return true;
+                    return ProcessNavigationToTarget(player, navigation, RanchVendorPosition, TownRoutineState.BuyingAtRanchVendor, "Ranch Vendor", now);
 
                 case TownRoutineState.BuyingAtRanchVendor:
-                    if (stepPhase == 0)
-                    {
-                        var ranchNpc = FindNearbyNpc("Ranch", RanchVendorPosition);
-                        if (ranchNpc != null)
-                        {
-                            netManager.SendNpcClick(ranchNpc.Id);
-                            stepPhase = 1;
-                            lastActionTime = now;
-                        }
-                        else if (now - lastActionTime > 3.0f)
-                        {
-                            AdvanceFromAlchemist(now);
-                        }
-                    }
-                    else if (stepPhase == 1 && now - lastActionTime >= 0.4f)
-                    {
-                        netManager.SendNpcSelectOption(0); // Option 0 is "Buy"
-                        stepPhase = 2;
-                        lastActionTime = now;
-                    }
-                    else if (stepPhase == 2 && now - lastActionTime >= 0.5f)
-                    {
-                        var buys = GetItemsToPurchaseFromVendor(RestockVendorType.RanchVendor);
-                        if (buys.Count > 0)
-                        {
-                            var msg = netManager.StartMessage(PacketType.ShopBuySell);
-                            msg.Write(buys.Count);
-                            foreach (var (itemId, count) in buys)
-                            {
-                                msg.Write(itemId);
-                                msg.Write(count);
-                            }
-                            netManager.SendMessage(msg);
-                            BotEngine.Instance?.LogEvent($"[Town Routine] Purchased {buys.Count} item type(s) from Ranch Vendor.");
-                        }
-                        else
-                        {
-                            netManager.SubmitShopPurchase(null);
-                        }
-
-                        CloseOpenShopUI();
-                        AdvanceFromAlchemist(now);
-                    }
-                    return true;
+                    return ProcessVendorBuy(netManager, RestockVendorType.RanchVendor, "Ranch", RanchVendorPosition, () => AdvanceFromAlchemist(now), now);
 
                 case TownRoutineState.NavigatingToAlchemist:
-                    if (targetStopDistance <= 0f) targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
-                    float distToAlch = Vector2.Distance(player.CellPosition, AlchemistPosition);
-                    if (distToAlch <= targetStopDistance)
-                    {
-                        currentState = TownRoutineState.BuyingAtAlchemist;
-                        stepPhase = 0;
-                        lastActionTime = now;
-                        BotEngine.Instance?.LogEvent($"[Town Routine] Reached Diligent Alchemist (dist: {distToAlch:F1} tiles). Opening shop.");
-                        return true;
-                    }
-
-                    if (!player.IsMoving && now - lastActionTime >= 0.3f)
-                    {
-                        navigation.NavigateTowards(player.CellPosition, AlchemistPosition, avoidPortals: false, hopDistance: 11);
-                        lastActionTime = now;
-                    }
-                    return true;
+                    return ProcessNavigationToTarget(player, navigation, AlchemistPosition, TownRoutineState.BuyingAtAlchemist, "Diligent Alchemist", now);
 
                 case TownRoutineState.BuyingAtAlchemist:
-                    if (stepPhase == 0)
+                    return ProcessVendorBuy(netManager, RestockVendorType.AlchemistVendor, "Alchemist", AlchemistPosition, () =>
                     {
-                        var alchNpc = FindNearbyNpc("Alchemist", AlchemistPosition);
-                        if (alchNpc != null)
-                        {
-                            netManager.SendNpcClick(alchNpc.Id);
-                            stepPhase = 1;
-                            lastActionTime = now;
-                        }
-                        else if (now - lastActionTime > 3.0f)
-                        {
-                            if (HasItemsToStore())
-                            {
-                                currentState = TownRoutineState.NavigatingToKafra;
-                                stepPhase = 0;
-                                targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
-                                lastActionTime = now + 0.4f;
-                            }
-                            else
-                            {
-                                currentState = TownRoutineState.Completed;
-                            }
-                        }
-                    }
-                    else if (stepPhase == 1 && now - lastActionTime >= 0.4f)
-                    {
-                        netManager.SendNpcSelectOption(0); // Option 0 is "Buy"
-                        stepPhase = 2;
-                        lastActionTime = now;
-                    }
-                    else if (stepPhase == 2 && now - lastActionTime >= 0.5f)
-                    {
-                        var buys = GetItemsToPurchaseFromVendor(RestockVendorType.AlchemistVendor);
-                        if (buys.Count > 0)
-                        {
-                            var msg = netManager.StartMessage(PacketType.ShopBuySell);
-                            msg.Write(buys.Count);
-                            foreach (var (itemId, count) in buys)
-                            {
-                                msg.Write(itemId);
-                                msg.Write(count);
-                            }
-                            netManager.SendMessage(msg);
-                            BotEngine.Instance?.LogEvent($"[Town Routine] Purchased {buys.Count} item type(s) from Diligent Alchemist.");
-                        }
-                        else
-                        {
-                            netManager.SubmitShopPurchase(null);
-                        }
-
-                        CloseOpenShopUI();
-
                         if (HasItemsToStore())
                         {
                             currentState = TownRoutineState.NavigatingToKafra;
                             stepPhase = 0;
-                            targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
+                            targetStopDistance = UnityEngine.Random.Range(BotConstants.MinStopDistance, BotConstants.MaxStopDistance);
                             lastActionTime = now + 0.4f;
                         }
                         else
@@ -746,144 +503,326 @@ namespace RebuildBotPlugin.Controllers
                             stepPhase = 0;
                             lastActionTime = now;
                         }
-                    }
-                    return true;
+                    }, now);
 
                 case TownRoutineState.NavigatingToKafra:
-                    if (targetStopDistance <= 0f) targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
-                    float distToKafra = Vector2.Distance(player.CellPosition, KafraPosition);
-                    if (distToKafra <= targetStopDistance)
-                    {
-                        currentState = TownRoutineState.InteractingWithKafra;
-                        stepPhase = 0;
-                        lastActionTime = now;
-                        BotEngine.Instance?.LogEvent($"[Town Routine] Reached Kafra Staff (dist: {distToKafra:F1} tiles). Opening storage.");
-                        return true;
-                    }
-
-                    if (!player.IsMoving && now - lastActionTime >= 0.3f)
-                    {
-                        navigation.NavigateTowards(player.CellPosition, KafraPosition, avoidPortals: false, hopDistance: 11);
-                        lastActionTime = now;
-                    }
-                    return true;
+                    return ProcessNavigationToTarget(player, navigation, KafraPosition, TownRoutineState.InteractingWithKafra, "Kafra Staff", now);
 
                 case TownRoutineState.InteractingWithKafra:
-                    var cam = CameraFollower.Instance;
-                    bool dialogOpen = cam != null && cam.DialogPanel != null && cam.DialogPanel.activeSelf;
-                    bool optionOpen = cam != null && cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf;
-
-                    if (stepPhase == 0)
-                    {
-                        var kafraNpc = FindNearbyNpc("Kafra", KafraPosition);
-                        if (kafraNpc != null)
-                        {
-                            netManager.SendNpcClick(kafraNpc.Id);
-                            stepPhase = 1;
-                            lastActionTime = now + UnityEngine.Random.Range(0.6f, 0.9f);
-                        }
-                        else if (now - lastActionTime > 3.0f)
-                        {
-                            currentState = TownRoutineState.Completed;
-                            lastCompletedTime = now;
-                        }
-                    }
-                    else if (stepPhase == 1)
-                    {
-                        // 1. If option menu is open, select "Use Storage"
-                        if (optionOpen)
-                        {
-                            if (now - lastActionTime < 0.6f) return true; // Human reading delay
-
-                            var buttons = cam.NpcOptionPanel.GetComponentsInChildren<NpcOptionButton>(false);
-                            if (buttons != null && buttons.Length > 0)
-                            {
-                                foreach (var btn in buttons)
-                                {
-                                    if (btn == null) continue;
-                                    string text = btn.TextBox != null ? btn.TextBox.text : "";
-                                    if (text.IndexOf("Storage", StringComparison.OrdinalIgnoreCase) >= 0 || btn.Id == 1)
-                                    {
-                                        btn.OnClick();
-                                        stepPhase = 2; // Storage option chosen
-                                        lastActionTime = now + UnityEngine.Random.Range(0.8f, 1.2f); // Human wait for storage UI to open
-                                        BotEngine.Instance?.LogEvent($"[Town Routine] Selected 'Use Storage' (ID: {btn.Id}).");
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                        // 2. Advance dialogue prompt to open the option menu
-                        else if (dialogOpen)
-                        {
-                            if (now - lastActionTime >= 0.75f) // Human reading delay
-                            {
-                                netManager.SendNpcAdvance();
-                                lastActionTime = now;
-                                BotEngine.Instance?.LogEvent("[Town Routine] Advanced Kafra welcome dialog.");
-                            }
-                            return true;
-                        }
-                        else if (now - lastActionTime >= 3.5f)
-                        {
-                            stepPhase = 0; // Retry click
-                            lastActionTime = now;
-                        }
-                    }
-                    else if (stepPhase == 2 && now - lastActionTime >= 0f)
-                    {
-                        var state = PlayerState.Instance;
-                        if (state?.Inventory != null)
-                        {
-                            var inv = state.Inventory.GetInventoryData();
-                            int storedCount = 0;
-
-                            foreach (var kvp in inv)
-                            {
-                                var item = kvp.Value;
-                                if (item.ItemData != null && item.Count > 0 && GetItemDisposition(item) == "Store")
-                                {
-                                    netManager.SendMoveStorageItem(item.BagSlotId, item.Count, true);
-                                    storedCount++;
-                                }
-                            }
-
-                            BotEngine.Instance?.LogEvent($"[Town Routine] Deposited {storedCount} item stack(s) into Kafra Storage.");
-                        }
-
-                        // Human pause before closing storage
-                        stepPhase = 3;
-                        lastActionTime = now + UnityEngine.Random.Range(0.7f, 1.0f);
-                    }
-                    else if (stepPhase == 3 && now - lastActionTime >= 0f)
-                    {
-                        netManager.SendEndStorage();
-                        CloseOpenStorageUI();
-                        // Wait 2.0s for server database write and interaction cleanup
-                        stepPhase = 4;
-                        lastActionTime = now + 2.0f;
-                        BotEngine.Instance?.LogEvent("[Town Routine] Closed Kafra Storage. Waiting for server sync...");
-                    }
-                    else if (stepPhase == 4 && now - lastActionTime >= 0f)
-                    {
-                        CloseOpenStorageUI();
-                        currentState = TownRoutineState.Completed;
-                        lastCompletedTime = now;
-                        stepPhase = 0;
-                        lastActionTime = now;
-                    }
-                    return true;
+                    return ProcessKafraStorage(netManager, now);
 
                 case TownRoutineState.Completed:
-                    CloseOpenShopUI();
-                    CloseOpenStorageUI();
+                    NpcInteractionHelper.CleanupNpcUi();
                     lastCompletedTime = now;
                     BotEngine.Instance?.LogEvent("[Town Routine] Base operations completed successfully. Resuming hunting.");
                     currentState = TownRoutineState.Idle;
+                    navigation?.ResetWander();
                     return false;
             }
 
             return false;
+        }
+
+        private bool ProcessNavigationToTarget(ServerControllable player, NavigationController navigation, Vector2Int targetPos, TownRoutineState nextState, string targetName, float now)
+        {
+            if (targetStopDistance <= 0f) targetStopDistance = UnityEngine.Random.Range(BotConstants.MinStopDistance, BotConstants.MaxStopDistance);
+            float dist = Vector2.Distance(player.CellPosition, targetPos);
+            if (dist <= targetStopDistance)
+            {
+                currentState = nextState;
+                stepPhase = 0;
+                lastActionTime = now;
+                BotEngine.Instance?.LogEvent($"[Town Routine] Reached {targetName} (dist: {dist:F1} tiles). Opening interaction.");
+                return true;
+            }
+
+            if (!player.IsMoving && now - lastActionTime >= 0.3f)
+            {
+                navigation.NavigateTowards(player.CellPosition, targetPos, avoidPortals: false, hopDistance: 11);
+                lastActionTime = now;
+            }
+            return true;
+        }
+
+        private bool ProcessVendorSell(NetworkManager netManager, float now)
+        {
+            if (stepPhase == 0)
+            {
+                NpcInteractionHelper.CleanupNpcUi();
+                var vendorNpc = NpcInteractionHelper.FindNearbyNpc(netManager, "Vendor", GeneralVendorPosition);
+                if (vendorNpc != null)
+                {
+                    netManager.SendNpcClick(vendorNpc.Id);
+                    stepPhase = 1;
+                    lastActionTime = now;
+                }
+                else if (now - lastActionTime > 3.0f)
+                {
+                    AdvanceFromGeneralVendor(now);
+                }
+            }
+            else if (stepPhase == 1 && now - lastActionTime >= 0.3f)
+            {
+                var cam = CameraFollower.Instance;
+                if (cam != null && cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf)
+                {
+                    var buttons = cam.NpcOptionPanel.GetComponentsInChildren<NpcOptionButton>(false);
+                    NpcOptionButton sellBtn = null;
+                    if (buttons != null)
+                    {
+                        foreach (var btn in buttons)
+                        {
+                            if (btn == null) continue;
+                            string text = btn.TextBox != null ? btn.TextBox.text : "";
+                            if (text.IndexOf("Sell", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                sellBtn = btn;
+                                break;
+                            }
+                        }
+                    }
+                    if (sellBtn != null)
+                    {
+                        sellBtn.OnClick();
+                    }
+                    else
+                    {
+                        cam.NpcOptionPanel.SetActive(false);
+                        netManager.SendNpcSelectOption(1); // Option 1 is "Sell"
+                    }
+                    stepPhase = 2;
+                    lastActionTime = now;
+                }
+                else if (now - lastActionTime >= 1.5f)
+                {
+                    netManager.SendNpcSelectOption(1);
+                    stepPhase = 2;
+                    lastActionTime = now;
+                }
+            }
+            else if (stepPhase == 2 && now - lastActionTime >= 0.5f)
+            {
+                if (InventoryHelper.TryGetInventoryData(out var inv))
+                {
+                    var itemsToSell = new List<(int bagId, int count)>();
+                    foreach (var kvp in inv)
+                    {
+                        var item = kvp.Value;
+                        if (item.ItemData != null && item.Count > 0 && GetItemDisposition(item) == "Sell")
+                        {
+                            itemsToSell.Add((item.BagSlotId, item.Count));
+                        }
+                    }
+
+                    if (itemsToSell.Count > 0)
+                    {
+                        var msg = netManager.StartMessage(PacketType.ShopBuySell);
+                        msg.Write(itemsToSell.Count);
+                        foreach (var (bagId, count) in itemsToSell)
+                        {
+                            msg.Write(bagId);
+                            msg.Write(count);
+                        }
+                        netManager.SendMessage(msg);
+                        BotEngine.Instance?.LogEvent($"[Town Routine] Sold {itemsToSell.Count} item stack(s) to General Vendor.");
+                    }
+                    else
+                    {
+                        netManager.SubmitShopPurchase(null);
+                        BotEngine.Instance?.LogEvent("[Town Routine] No items marked for sale.");
+                    }
+
+                    CloseOpenShopUI();
+                    NpcInteractionHelper.CleanupNpcUi();
+                }
+
+                AdvanceFromGeneralVendor(now);
+            }
+            return true;
+        }
+
+        private bool ProcessVendorBuy(NetworkManager netManager, RestockVendorType vendorType, string npcNameSubstr, Vector2Int npcPos, Action onFinished, float now)
+        {
+            if (stepPhase == 0)
+            {
+                NpcInteractionHelper.CleanupNpcUi();
+                var npc = NpcInteractionHelper.FindNearbyNpc(netManager, npcNameSubstr, npcPos);
+                if (npc != null)
+                {
+                    netManager.SendNpcClick(npc.Id);
+                    stepPhase = 1;
+                    lastActionTime = now;
+                }
+                else if (now - lastActionTime > 3.0f)
+                {
+                    onFinished?.Invoke();
+                }
+            }
+            else if (stepPhase == 1 && now - lastActionTime >= 0.3f)
+            {
+                var cam = CameraFollower.Instance;
+                if (cam != null && cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf)
+                {
+                    var buttons = cam.NpcOptionPanel.GetComponentsInChildren<NpcOptionButton>(false);
+                    NpcOptionButton buyBtn = null;
+                    if (buttons != null)
+                    {
+                        foreach (var btn in buttons)
+                        {
+                            if (btn == null) continue;
+                            string text = btn.TextBox != null ? btn.TextBox.text : "";
+                            if (text.IndexOf("Buy", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                buyBtn = btn;
+                                break;
+                            }
+                        }
+                    }
+                    if (buyBtn != null)
+                    {
+                        buyBtn.OnClick();
+                    }
+                    else
+                    {
+                        cam.NpcOptionPanel.SetActive(false);
+                        netManager.SendNpcSelectOption(0); // Option 0 is "Buy"
+                    }
+                    stepPhase = 2;
+                    lastActionTime = now;
+                }
+                else if (now - lastActionTime >= 1.5f)
+                {
+                    netManager.SendNpcSelectOption(0);
+                    stepPhase = 2;
+                    lastActionTime = now;
+                }
+            }
+            else if (stepPhase == 2 && now - lastActionTime >= 0.5f)
+            {
+                var buys = GetItemsToPurchaseFromVendor(vendorType);
+                if (buys.Count > 0)
+                {
+                    var msg = netManager.StartMessage(PacketType.ShopBuySell);
+                    msg.Write(buys.Count);
+                    foreach (var (itemId, count) in buys)
+                    {
+                        msg.Write(itemId);
+                        msg.Write(count);
+                    }
+                    netManager.SendMessage(msg);
+                    BotEngine.Instance?.LogEvent($"[Town Routine] Purchased {buys.Count} item type(s) from {vendorType}.");
+                }
+                else
+                {
+                    netManager.SubmitShopPurchase(null);
+                }
+
+                CloseOpenShopUI();
+                NpcInteractionHelper.CleanupNpcUi();
+                onFinished?.Invoke();
+            }
+            return true;
+        }
+
+        private bool ProcessKafraStorage(NetworkManager netManager, float now)
+        {
+            var cam = CameraFollower.Instance;
+            bool dialogOpen = cam != null && cam.DialogPanel != null && cam.DialogPanel.activeSelf;
+            bool optionOpen = cam != null && cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf;
+
+            if (stepPhase == 0)
+            {
+                NpcInteractionHelper.CleanupNpcUi();
+                var kafraNpc = NpcInteractionHelper.FindNearbyNpc(netManager, "Kafra", KafraPosition);
+                if (kafraNpc != null)
+                {
+                    netManager.SendNpcClick(kafraNpc.Id);
+                    stepPhase = 1;
+                    lastActionTime = now + UnityEngine.Random.Range(0.6f, 0.9f);
+                }
+                else if (now - lastActionTime > 3.0f)
+                {
+                    currentState = TownRoutineState.Completed;
+                    lastCompletedTime = now;
+                }
+            }
+            else if (stepPhase == 1)
+            {
+                if (optionOpen)
+                {
+                    if (now - lastActionTime < 0.6f) return true;
+
+                    var buttons = cam.NpcOptionPanel.GetComponentsInChildren<NpcOptionButton>(false);
+                    if (buttons != null && buttons.Length > 0)
+                    {
+                        foreach (var btn in buttons)
+                        {
+                            if (btn == null) continue;
+                            string text = btn.TextBox != null ? btn.TextBox.text : "";
+                            if (text.IndexOf("Storage", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                btn.OnClick();
+                                stepPhase = 2;
+                                lastActionTime = now + UnityEngine.Random.Range(0.8f, 1.2f);
+                                BotEngine.Instance?.LogEvent($"[Town Routine] Selected 'Use Storage' (ID: {btn.Id}).");
+                                return true;
+                            }
+                        }
+                    }
+                }
+                else if (dialogOpen)
+                {
+                    if (now - lastActionTime >= 0.75f)
+                    {
+                        netManager.SendNpcAdvance();
+                        lastActionTime = now;
+                        BotEngine.Instance?.LogEvent("[Town Routine] Advanced Kafra welcome dialog.");
+                    }
+                    return true;
+                }
+                else if (now - lastActionTime >= 3.5f)
+                {
+                    stepPhase = 0;
+                    lastActionTime = now;
+                }
+            }
+            else if (stepPhase == 2 && now - lastActionTime >= 0f)
+            {
+                if (InventoryHelper.TryGetInventoryData(out var inv))
+                {
+                    int storedCount = 0;
+                    foreach (var kvp in inv)
+                    {
+                        var item = kvp.Value;
+                        if (item.ItemData != null && item.Count > 0 && GetItemDisposition(item) == "Store")
+                        {
+                            netManager.SendMoveStorageItem(item.BagSlotId, item.Count, true);
+                            storedCount++;
+                        }
+                    }
+                    BotEngine.Instance?.LogEvent($"[Town Routine] Deposited {storedCount} item stack(s) into Kafra Storage.");
+                }
+
+                stepPhase = 3;
+                lastActionTime = now + UnityEngine.Random.Range(0.7f, 1.0f);
+            }
+            else if (stepPhase == 3 && now - lastActionTime >= 0f)
+            {
+                netManager.SendEndStorage();
+                CloseOpenStorageUI();
+                stepPhase = 4;
+                lastActionTime = now + 2.0f;
+                BotEngine.Instance?.LogEvent("[Town Routine] Closed Kafra Storage. Waiting for server sync...");
+            }
+            else if (stepPhase == 4 && now - lastActionTime >= 0f)
+            {
+                CloseOpenStorageUI();
+                currentState = TownRoutineState.Completed;
+                lastCompletedTime = now;
+                stepPhase = 0;
+                lastActionTime = now;
+            }
+            return true;
         }
 
         private void AdvanceFromGeneralVendor(float now)
@@ -908,7 +847,7 @@ namespace RebuildBotPlugin.Controllers
             {
                 currentState = TownRoutineState.NavigatingToRanchVendor;
                 stepPhase = 0;
-                targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
+                targetStopDistance = UnityEngine.Random.Range(BotConstants.MinStopDistance, BotConstants.MaxStopDistance);
                 lastActionTime = now + 0.4f;
                 BotEngine.Instance?.LogEvent($"[Town Routine] Moving to Ranch Vendor to buy supplies (target distance: {targetStopDistance:F1} tiles).");
                 return;
@@ -924,7 +863,7 @@ namespace RebuildBotPlugin.Controllers
             {
                 currentState = TownRoutineState.NavigatingToAlchemist;
                 stepPhase = 0;
-                targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
+                targetStopDistance = UnityEngine.Random.Range(BotConstants.MinStopDistance, BotConstants.MaxStopDistance);
                 lastActionTime = now + 0.4f;
                 BotEngine.Instance?.LogEvent($"[Town Routine] Moving to Diligent Alchemist to buy supplies (target distance: {targetStopDistance:F1} tiles).");
                 return;
@@ -934,7 +873,7 @@ namespace RebuildBotPlugin.Controllers
             {
                 currentState = TownRoutineState.NavigatingToKafra;
                 stepPhase = 0;
-                targetStopDistance = UnityEngine.Random.Range(2.2f, 6.0f);
+                targetStopDistance = UnityEngine.Random.Range(BotConstants.MinStopDistance, BotConstants.MaxStopDistance);
                 lastActionTime = now + 0.4f;
                 BotEngine.Instance?.LogEvent($"[Town Routine] Moving to Kafra Staff to deposit items (target distance: {targetStopDistance:F1} tiles).");
                 return;
@@ -981,22 +920,7 @@ namespace RebuildBotPlugin.Controllers
                     UnityEngine.Object.Destroy(StorageUI.Instance.gameObject);
                     StorageUI.Instance = null;
                 }
-                var cam = CameraFollower.Instance;
-                if (cam != null)
-                {
-                    cam.IsInNPCInteraction = false;
-                    cam.OverrideTarget = null;
-                    if (cam.DialogPanel != null)
-                    {
-                        var dialogWindow = cam.DialogPanel.GetComponent<DialogWindow>();
-                        if (dialogWindow != null)
-                            dialogWindow.HideUI();
-                        else
-                            cam.DialogPanel.SetActive(false);
-                    }
-                    if (cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf)
-                        cam.NpcOptionPanel.SetActive(false);
-                }
+                NpcInteractionHelper.CleanupNpcUi();
             }
             catch (Exception ex)
             {

@@ -12,6 +12,7 @@ namespace RebuildBotPlugin
         public static bool IsMouseOverOverlay = false;
 
         public bool IsVisible = true;
+        private bool showQuickToggles = true;
         private bool showConfigHelpers = false;
         private bool showHeatmapMonitor = false;
         private Texture2D heatmapGridTex = null;
@@ -19,7 +20,9 @@ namespace RebuildBotPlugin
         private float lastHeatmapTexUpdate = 0f;
         private int potionPageIndex = 0;
         private int monsterPageIndex = 0;
-        private Rect windowRect = new Rect(20, 20, 370, 260);
+
+        // Offset from top-left (y = 160) so it doesn't obstruct player health / HUD window
+        private Rect windowRect = new Rect(20, 160, 380, 340);
 
         private bool isDragging = false;
         private Vector2 dragOffset;
@@ -40,7 +43,7 @@ namespace RebuildBotPlugin
                 ContentWidth = width;
             }
 
-            public Rect Next(float height = 20)
+            public Rect Next(float height = 22)
             {
                 Rect r = new Rect(StartX, CurrentY, ContentWidth, height);
                 CurrentY += height + 4;
@@ -162,6 +165,73 @@ namespace RebuildBotPlugin
             return state;
         }
 
+        private bool ConfigToggle(Rect rect, string label, Func<bool> getter, Action<bool> setter)
+        {
+            bool current = getter();
+            bool next = DrawToggleButton(rect, label, current);
+            if (next != current)
+            {
+                setter(next);
+                BotConfigManager.SaveConfig();
+            }
+            return next;
+        }
+
+        private void DrawMonsterCycleButton(Rect mRow, string mName)
+        {
+            bool isWhite = BotConfigManager.Current.TargetMonsterWhitelist.Contains(mName);
+            bool isBlack = BotConfigManager.Current.TargetMonsterBlacklist.Contains(mName);
+            bool isAvoid = BotConfigManager.Current.MonsterAvoidanceList.Contains(mName);
+
+            string listState = "None";
+            Color listColor = new Color(0.35f, 0.35f, 0.35f, 1f);
+
+            if (isWhite)
+            {
+                listState = "White";
+                listColor = new Color(0.2f, 0.85f, 0.35f, 1f); // Green
+            }
+            else if (isBlack)
+            {
+                listState = "Black";
+                listColor = new Color(0.85f, 0.25f, 0.25f, 1f); // Red
+            }
+            else if (isAvoid)
+            {
+                listState = "Avoid";
+                listColor = new Color(0.95f, 0.55f, 0.15f, 1f); // Orange
+            }
+
+            // Single cycle button: None -> White -> Black -> Avoid -> None
+            if (CustomButton(new Rect(mRow.x + 195, mRow.y, 80, 22), $"[{listState}]", true, listColor))
+            {
+                BotConfigManager.Current.TargetMonsterWhitelist.Remove(mName);
+                BotConfigManager.Current.TargetMonsterBlacklist.Remove(mName);
+                BotConfigManager.Current.MonsterAvoidanceList.Remove(mName);
+
+                if (listState == "None")
+                {
+                    BotConfigManager.Current.TargetMonsterWhitelist.Add(mName);
+                    BotEngine.Instance?.LogEvent($"Set '{mName}' to [Whitelist].");
+                }
+                else if (listState == "White")
+                {
+                    BotConfigManager.Current.TargetMonsterBlacklist.Add(mName);
+                    BotEngine.Instance?.LogEvent($"Set '{mName}' to [Blacklist].");
+                }
+                else if (listState == "Black")
+                {
+                    BotConfigManager.Current.MonsterAvoidanceList.Add(mName);
+                    BotEngine.Instance?.LogEvent($"Set '{mName}' to [Avoidance].");
+                }
+                else
+                {
+                    BotEngine.Instance?.LogEvent($"Cleared list filter for '{mName}' [None].");
+                }
+                BotConfigManager.SaveConfig();
+            }
+        }
+
         private void OnGUI()
         {
             if (!IsVisible) return;
@@ -187,8 +257,8 @@ namespace RebuildBotPlugin
                 isDragging = false;
             }
 
-            // Adjust window height dynamically based on expanded sections
-            float targetHeight = 355 + (showHeatmapMonitor ? 195 : 0) + (showConfigHelpers ? 285 : 0);
+            // Adjust window height dynamically based on expanded sections with comfortable padding
+            float targetHeight = 320 + (showQuickToggles ? 98 : 0) + (showHeatmapMonitor ? 205 : 0) + (showConfigHelpers ? 305 : 0);
             windowRect.height = targetHeight;
 
             // Draw main window background box
@@ -207,21 +277,12 @@ namespace RebuildBotPlugin
 
             // Row 1: Master Enable, Debug Log, & Reload Config
             Rect r1 = cursor.Next(24);
-            bool currentEnabled = BotConfigManager.Current.Enabled;
-            bool newEnabled = DrawToggleButton(new Rect(r1.x, r1.y, 130, 24), "Bot (F10)", currentEnabled);
-            if (newEnabled != currentEnabled)
-            {
-                BotConfigManager.Current.Enabled = newEnabled;
-                BotConfigManager.SaveConfig();
-            }
+            ConfigToggle(new Rect(r1.x, r1.y, 130, 24), "Bot (F10)", () => BotConfigManager.Current.Enabled, v => BotConfigManager.Current.Enabled = v);
 
             bool currentVerbose = BotConfigManager.Current.VerboseLogging;
-            bool newVerbose = DrawToggleButton(new Rect(r1.x + 135, r1.y, 115, 24), "Debug Log", currentVerbose);
-            if (newVerbose != currentVerbose)
+            if (ConfigToggle(new Rect(r1.x + 135, r1.y, 115, 24), "Debug Log", () => currentVerbose, v => BotConfigManager.Current.VerboseLogging = v) != currentVerbose)
             {
-                BotConfigManager.Current.VerboseLogging = newVerbose;
-                BotConfigManager.SaveConfig();
-                BotEngine.Instance?.LogEvent($"Debug Logging {(newVerbose ? "ENABLED" : "DISABLED")}.");
+                BotEngine.Instance?.LogEvent($"Debug Logging {(BotConfigManager.Current.VerboseLogging ? "ENABLED" : "DISABLED")}.");
             }
 
             if (CustomButton(new Rect(r1.x + 255, r1.y, contentW - 255, 24), "Reload (F5)"))
@@ -232,109 +293,76 @@ namespace RebuildBotPlugin
 
             cursor.Space(4);
 
-            // Row 2: Quick Toggles Header
-            GUI.Label(cursor.Next(18), "<b>Quick Toggles:</b>");
-
-            // Row 3: Primary Function Toggles
-            Rect rToggles = cursor.Next(24);
-            float togW = (contentW - 20) / 5f;
-
-            bool newAttack = DrawToggleButton(new Rect(rToggles.x, rToggles.y, togW, 24), "Attack", BotConfigManager.Current.AutoAttack);
-            if (newAttack != BotConfigManager.Current.AutoAttack)
+            // Quick Toggles Collapsible Section
+            Rect rQuickHeader = cursor.Next(22);
+            string quickToggleText = showQuickToggles ? "[-] Hide Quick Toggles" : "[+] Show Quick Toggles";
+            if (CustomButton(rQuickHeader, quickToggleText))
             {
-                BotConfigManager.Current.AutoAttack = newAttack;
-                BotConfigManager.SaveConfig();
+                showQuickToggles = !showQuickToggles;
             }
 
-            bool newLoot = DrawToggleButton(new Rect(rToggles.x + togW + 5, rToggles.y, togW, 24), "Loot", BotConfigManager.Current.AutoLoot);
-            if (newLoot != BotConfigManager.Current.AutoLoot)
+            if (showQuickToggles)
             {
-                BotConfigManager.Current.AutoLoot = newLoot;
-                BotConfigManager.SaveConfig();
+                cursor.Space(3);
+                var cfg = BotConfigManager.Current;
+                float togW = (contentW - 16) / 5f;
+
+                // Row 1 of quick toggles
+                Rect rToggles1 = cursor.Next(24);
+                ConfigToggle(new Rect(rToggles1.x, rToggles1.y, togW, 24), "Attack", () => cfg.AutoAttack, v => cfg.AutoAttack = v);
+                ConfigToggle(new Rect(rToggles1.x + togW + 4, rToggles1.y, togW, 24), "Loot", () => cfg.AutoLoot, v => cfg.AutoLoot = v);
+                ConfigToggle(new Rect(rToggles1.x + (togW + 4) * 2, rToggles1.y, togW, 24), "Wander", () => cfg.AutoWander, v => cfg.AutoWander = v);
+                ConfigToggle(new Rect(rToggles1.x + (togW + 4) * 3, rToggles1.y, togW, 24), "Potion", () => cfg.AutoPotion, v => cfg.AutoPotion = v);
+                ConfigToggle(new Rect(rToggles1.x + (togW + 4) * 4, rToggles1.y, togW, 24), "Aggro 1st", () => cfg.PrioritizeAggressiveMonsters, v => cfg.PrioritizeAggressiveMonsters = v);
+
+                cursor.Space(3);
+
+                // Row 2 of quick toggles
+                Rect rToggles2 = cursor.Next(24);
+                ConfigToggle(new Rect(rToggles2.x, rToggles2.y, togW, 24), "Respawn", () => cfg.AutoRespawn, v => cfg.AutoRespawn = v);
+                ConfigToggle(new Rect(rToggles2.x + togW + 4, rToggles2.y, togW, 24), "Travel", () => cfg.AutoTravel, v => cfg.AutoTravel = v);
+                ConfigToggle(new Rect(rToggles2.x + (togW + 4) * 2, rToggles2.y, togW, 24), "Avoid", () => cfg.AutoAvoidMonsters, v => cfg.AutoAvoidMonsters = v);
+                ConfigToggle(new Rect(rToggles2.x + (togW + 4) * 3, rToggles2.y, togW, 24), "HP Wing", () => cfg.EmergencyFlyWingOnLowHp, v => cfg.EmergencyFlyWingOnLowHp = v);
+                ConfigToggle(new Rect(rToggles2.x + (togW + 4) * 4, rToggles2.y, togW, 24), "Auto-Sit", () => cfg.AutoSitToRecover, v => cfg.AutoSitToRecover = v);
+
+                cursor.Space(3);
+
+                // Row 3 of quick toggles (Progression & Town Routines)
+                Rect rToggles3 = cursor.Next(24);
+                float togW3 = (contentW - 8) / 3f;
+                ConfigToggle(new Rect(rToggles3.x, rToggles3.y, togW3, 24), "Auto-Stats", () => cfg.AutoStatAllocation, v => cfg.AutoStatAllocation = v);
+                ConfigToggle(new Rect(rToggles3.x + togW3 + 4, rToggles3.y, togW3, 24), "Auto-Skills", () => cfg.AutoSkillAllocation, v => cfg.AutoSkillAllocation = v);
+                ConfigToggle(new Rect(rToggles3.x + (togW3 + 4) * 2, rToggles3.y, togW3, 24), "No-HP Town", () => cfg.AutoReturnOnOutOfHpItems, v => cfg.AutoReturnOnOutOfHpItems = v);
             }
 
-            bool newWander = DrawToggleButton(new Rect(rToggles.x + (togW + 5) * 2, rToggles.y, togW, 24), "Wander", BotConfigManager.Current.AutoWander);
-            if (newWander != BotConfigManager.Current.AutoWander)
-            {
-                BotConfigManager.Current.AutoWander = newWander;
-                BotConfigManager.SaveConfig();
-            }
-
-            bool newPotion = DrawToggleButton(new Rect(rToggles.x + (togW + 5) * 3, rToggles.y, togW, 24), "Potion", BotConfigManager.Current.AutoPotion);
-            if (newPotion != BotConfigManager.Current.AutoPotion)
-            {
-                BotConfigManager.Current.AutoPotion = newPotion;
-                BotConfigManager.SaveConfig();
-            }
-
-            bool newAggro = DrawToggleButton(new Rect(rToggles.x + (togW + 5) * 4, rToggles.y, togW, 24), "Aggro 1st", BotConfigManager.Current.PrioritizeAggressiveMonsters);
-            if (newAggro != BotConfigManager.Current.PrioritizeAggressiveMonsters)
-            {
-                BotConfigManager.Current.PrioritizeAggressiveMonsters = newAggro;
-                BotConfigManager.SaveConfig();
-            }
-
-            cursor.Space(3);
-
-            // Row 4: Quick Toggles - Respawn, Travel, Avoid, HP Wing, Auto-Sit
-            Rect rToggles2 = cursor.Next(24);
-            float togW2 = (contentW - 20) / 5f;
-
-            bool newRespawn = DrawToggleButton(new Rect(rToggles2.x, rToggles2.y, togW2, 24), "Respawn", BotConfigManager.Current.AutoRespawn);
-            if (newRespawn != BotConfigManager.Current.AutoRespawn)
-            {
-                BotConfigManager.Current.AutoRespawn = newRespawn;
-                BotConfigManager.SaveConfig();
-            }
-
-            bool newTravel = DrawToggleButton(new Rect(rToggles2.x + togW2 + 5, rToggles2.y, togW2, 24), "Travel", BotConfigManager.Current.AutoTravel);
-            if (newTravel != BotConfigManager.Current.AutoTravel)
-            {
-                BotConfigManager.Current.AutoTravel = newTravel;
-                BotConfigManager.SaveConfig();
-            }
-
-            bool newAvoid = DrawToggleButton(new Rect(rToggles2.x + (togW2 + 5) * 2, rToggles2.y, togW2, 24), "Avoid", BotConfigManager.Current.AutoAvoidMonsters);
-            if (newAvoid != BotConfigManager.Current.AutoAvoidMonsters)
-            {
-                BotConfigManager.Current.AutoAvoidMonsters = newAvoid;
-                BotConfigManager.SaveConfig();
-            }
-
-            bool newWing = DrawToggleButton(new Rect(rToggles2.x + (togW2 + 5) * 3, rToggles2.y, togW2, 24), "HP Wing", BotConfigManager.Current.EmergencyFlyWingOnLowHp);
-            if (newWing != BotConfigManager.Current.EmergencyFlyWingOnLowHp)
-            {
-                BotConfigManager.Current.EmergencyFlyWingOnLowHp = newWing;
-                BotConfigManager.SaveConfig();
-            }
-
-            bool newRest = DrawToggleButton(new Rect(rToggles2.x + (togW2 + 5) * 4, rToggles2.y, togW2, 24), "Auto-Sit", BotConfigManager.Current.AutoSitToRecover);
-            if (newRest != BotConfigManager.Current.AutoSitToRecover)
-            {
-                BotConfigManager.Current.AutoSitToRecover = newRest;
-                BotConfigManager.SaveConfig();
-            }
-
-            cursor.Space(6);
+            cursor.Space(5);
 
             // Status Monitor
-            GUI.Label(cursor.Next(18), "<b>Status Monitor:</b>");
+            GUI.Label(cursor.Next(22), "<b>Status Monitor:</b>");
             if (BotEngine.Instance != null)
             {
                 Vector2Int pos = BotEngine.Instance.GetPlayerPosition();
-                GUI.Label(cursor.Next(18), $"Map: <b>{BotEngine.Instance.GetCurrentMapName()}</b> | Coordinates: <b>({pos.x}, {pos.y})</b>");
-                GUI.Label(cursor.Next(18), $"Status: <b>{BotEngine.Instance.CurrentState}</b>");
-                GUI.Label(cursor.Next(18), $"Target: <b>{BotEngine.Instance.CurrentTargetName}</b> ({BotEngine.Instance.CurrentTargetHp}/{BotEngine.Instance.CurrentTargetMaxHp} HP)");
-                GUI.Label(cursor.Next(18), $"Kills: <b>{BotEngine.Instance.KillCount}</b> | Items Looted: <b>{BotEngine.Instance.LootCount}</b>");
+                GUI.Label(cursor.Next(22), $"Map: <b>{BotEngine.Instance.GetCurrentMapName()}</b> | Coordinates: <b>({pos.x}, {pos.y})</b>");
+                GUI.Label(cursor.Next(22), $"Status: <b>{BotEngine.Instance.CurrentState}</b>");
+                GUI.Label(cursor.Next(22), $"Target: <b>{BotEngine.Instance.Combat.CurrentTargetName}</b> ({BotEngine.Instance.Combat.CurrentTargetHp}/{BotEngine.Instance.Combat.CurrentTargetMaxHp} HP)");
+                GUI.Label(cursor.Next(22), $"Kills: <b>{BotEngine.Instance.Combat.KillCount}</b> | Items Looted: <b>{BotEngine.Instance.Loot.LootCount}</b>");
 
-                cursor.Space(4);
+                // Character Progression Goals
+                var prog = BotEngine.Instance.Progression;
+                int curStatPts = Assets.Scripts.PlayerControl.PlayerState.Instance != null ? Assets.Scripts.PlayerControl.PlayerState.Instance.GetData(RebuildSharedData.Enum.EntityStats.PlayerStat.StatPoints) : 0;
+                int curSkillPts = Assets.Scripts.PlayerControl.PlayerState.Instance != null ? Assets.Scripts.PlayerControl.PlayerState.Instance.SkillPoints : 0;
+
+                GUI.Label(cursor.Next(22), $"Stat Goal: <b>{prog.ActiveStatGoalText}</b> (Unspent: <b>{curStatPts}</b>)");
+                GUI.Label(cursor.Next(22), $"Skill Goal: <b>{prog.ActiveSkillGoalText}</b> (Unspent: <b>{curSkillPts}</b>)");
+
+                cursor.Space(3);
 
                 // Experience & Rates Monitor
                 var tracker = BotEngine.Instance.ExpTracker;
-                Rect expHeader = cursor.Next(18);
+                Rect expHeader = cursor.Next(22);
                 string sessionTime = $"{tracker.ElapsedTime.Hours:D2}:{tracker.ElapsedTime.Minutes:D2}:{tracker.ElapsedTime.Seconds:D2}";
-                GUI.Label(new Rect(expHeader.x, expHeader.y, contentW - 70, 18), $"<b>EXP Tracker</b> (Session: {sessionTime}):");
-                if (CustomButton(new Rect(expHeader.x + contentW - 65, expHeader.y, 65, 18), "Reset"))
+                GUI.Label(new Rect(expHeader.x, expHeader.y, contentW - 70, 22), $"<b>EXP Tracker</b> (Session: {sessionTime}):");
+                if (CustomButton(new Rect(expHeader.x + contentW - 65, expHeader.y, 65, 20), "Reset"))
                 {
                     tracker.Reset();
                     BotEngine.Instance.LogEvent("EXP session stats reset.");
@@ -343,22 +371,22 @@ namespace RebuildBotPlugin
                 string baseRate = ExpTracker.FormatExp(tracker.BaseExpPerHour);
                 string baseGained = ExpTracker.FormatExp(tracker.SessionBaseExpGained);
                 string baseTtl = ExpTracker.FormatTtl(tracker.TimeToNextBaseLevel);
-                GUI.Label(cursor.Next(18), $"Base: <b>+{baseGained}</b> ({baseRate}/h) | TTL: <b>{baseTtl}</b>");
+                GUI.Label(cursor.Next(22), $"Base: <b>+{baseGained}</b> ({baseRate}/h) | TTL: <b>{baseTtl}</b>");
 
                 string jobRate = ExpTracker.FormatExp(tracker.JobExpPerHour);
                 string jobGained = ExpTracker.FormatExp(tracker.SessionJobExpGained);
                 string jobTtl = ExpTracker.FormatTtl(tracker.TimeToNextJobLevel);
-                GUI.Label(cursor.Next(18), $"Job:  <b>+{jobGained}</b> ({jobRate}/h) | TTL: <b>{jobTtl}</b>");
+                GUI.Label(cursor.Next(22), $"Job:  <b>+{jobGained}</b> ({jobRate}/h) | TTL: <b>{jobTtl}</b>");
             }
             else
             {
-                GUI.Label(cursor.Next(18), "<i>BotEngine not attached.</i>");
+                GUI.Label(cursor.Next(22), "<i>BotEngine not attached.</i>");
             }
 
-            cursor.Space(6);
+            cursor.Space(5);
 
             // Wander Heatmap Monitor Section
-            Rect rHeatmapHeader = cursor.Next(20);
+            Rect rHeatmapHeader = cursor.Next(22);
             string heatmapToggleText = showHeatmapMonitor ? "[-] Hide Wander Heatmap Monitor" : "[+] Show Wander Heatmap Monitor";
             if (CustomButton(rHeatmapHeader, heatmapToggleText))
             {
@@ -370,13 +398,13 @@ namespace RebuildBotPlugin
                 cursor.Space(3);
                 string currentMap = BotEngine.Instance.GetCurrentMapName();
                 Vector2Int playerPos = BotEngine.Instance.GetPlayerPosition();
-                Vector2Int currentWaypoint = BotEngine.Instance.CurrentExplorationWaypoint;
+                Vector2Int currentWaypoint = BotEngine.Instance.Navigation.CurrentExplorationWaypoint;
 
                 UpdateHeatmapTexture(currentMap, playerPos, currentWaypoint);
 
                 float distToWp = currentWaypoint != Vector2Int.zero ? Vector2.Distance(playerPos, currentWaypoint) : 0f;
                 string wpStr = currentWaypoint != Vector2Int.zero ? $"({currentWaypoint.x}, {currentWaypoint.y}) [Dist: {distToWp:F0}t]" : "None";
-                GUI.Label(cursor.Next(18), $"Active Waypoint: <b>{wpStr}</b>");
+                GUI.Label(cursor.Next(22), $"Active Waypoint: <b>{wpStr}</b>");
 
                 // Side-by-side area: Grid on left (110x110), candidates table on right
                 Rect rArea = cursor.Next(112);
@@ -392,12 +420,12 @@ namespace RebuildBotPlugin
                 float infoW = contentW - gridDim - 8;
                 LayoutCursor rightCursor = new LayoutCursor(infoX, rArea.y, infoW);
 
-                GUI.Label(rightCursor.Next(17), "<b>Top Cold Candidates:</b>");
-                var candidates = MapHeatmap.Instance.GetTopCandidateSectors(currentMap, playerPos, BotConfigManager.Current.PortalSafetyRadius, 4, BotEngine.Instance.LastWanderHeading);
+                GUI.Label(rightCursor.Next(20), "<b>Top Cold Candidates:</b>");
+                var candidates = MapHeatmap.Instance.GetTopCandidateSectors(currentMap, playerPos, BotConfigManager.Current.PortalSafetyRadius, 4, BotEngine.Instance.Navigation.LastWanderHeading);
 
                 if (candidates.Count == 0)
                 {
-                    GUI.Label(rightCursor.Next(18), "<i>No candidates available.</i>");
+                    GUI.Label(rightCursor.Next(20), "<i>No candidates available.</i>");
                 }
                 else
                 {
@@ -405,20 +433,20 @@ namespace RebuildBotPlugin
                     {
                         var c = candidates[i];
                         string ageStr = c.IsVisited ? $"{c.LastVisitedAge / 60f:F1}m ago" : "Never";
-                        GUI.Label(rightCursor.Next(17), $"#{i + 1} ({c.Sector.x * 16}, {c.Sector.y * 16}) | <b>{ageStr}</b> | {c.Distance:F0}t");
+                        GUI.Label(rightCursor.Next(20), $"#{i + 1} ({c.Sector.x * 16}, {c.Sector.y * 16}) | <b>{ageStr}</b> | {c.Distance:F0}t");
                     }
                 }
 
                 // Legend row
-                Rect rLegend = cursor.Next(18);
+                Rect rLegend = cursor.Next(22);
                 GUI.Label(rLegend, "<color=#FFFFFF>■ Player</color>  <color=#FFEE11>■ Target</color>  <color=#1AC6F2>■ Cold</color>  <color=#F23326>■ Hot</color>  <color=#404040>■ Block</color>");
                 cursor.Space(4);
             }
 
-            cursor.Space(4);
+            cursor.Space(5);
 
             // Config Quick-Setup Section
-            Rect rConfigHeader = cursor.Next(20);
+            Rect rConfigHeader = cursor.Next(22);
             string toggleText = showConfigHelpers ? "[-] Hide Area Helpers" : "[+] Show Area Helpers (Monsters & Items)";
             if (CustomButton(rConfigHeader, toggleText))
             {
@@ -430,24 +458,24 @@ namespace RebuildBotPlugin
                 cursor.Space(4);
 
                 // Monsters in Area
-                var activeMonsters = BotEngine.Instance.GetActiveMonstersOnMap();
+                var activeMonsters = BotEngine.Instance.Targeting.GetActiveMonstersOnMap();
                 int totalMonsters = activeMonsters.Count;
                 int monPerPage = 4;
                 int totalMonPages = Math.Max(1, (int)Math.Ceiling(totalMonsters / (float)monPerPage));
                 if (monsterPageIndex >= totalMonPages) monsterPageIndex = totalMonPages - 1;
                 if (monsterPageIndex < 0) monsterPageIndex = 0;
 
-                Rect rMonHeader = cursor.Next(20);
-                GUI.Label(new Rect(rMonHeader.x, rMonHeader.y, 220, 20), $"<b>Monsters in Area ({totalMonsters}):</b>");
+                Rect rMonHeader = cursor.Next(22);
+                GUI.Label(new Rect(rMonHeader.x, rMonHeader.y, 220, 22), $"<b>Monsters in Area ({totalMonsters}):</b>");
 
                 if (totalMonPages > 1)
                 {
-                    if (CustomButton(new Rect(rMonHeader.x + 230, rMonHeader.y, 25, 18), "<"))
+                    if (CustomButton(new Rect(rMonHeader.x + 230, rMonHeader.y, 25, 20), "<"))
                     {
                         if (monsterPageIndex > 0) monsterPageIndex--;
                     }
-                    GUI.Label(new Rect(rMonHeader.x + 260, rMonHeader.y, 50, 18), $"{monsterPageIndex + 1}/{totalMonPages}");
-                    if (CustomButton(new Rect(rMonHeader.x + 315, rMonHeader.y, 25, 18), ">"))
+                    GUI.Label(new Rect(rMonHeader.x + 260, rMonHeader.y, 50, 22), $"{monsterPageIndex + 1}/{totalMonPages}");
+                    if (CustomButton(new Rect(rMonHeader.x + 315, rMonHeader.y, 25, 20), ">"))
                     {
                         if (monsterPageIndex < totalMonPages - 1) monsterPageIndex++;
                     }
@@ -455,7 +483,7 @@ namespace RebuildBotPlugin
 
                 if (totalMonsters == 0)
                 {
-                    GUI.Label(cursor.Next(18), "<i>No monsters detected in area yet.</i>");
+                    GUI.Label(cursor.Next(22), "<i>No monsters detected in area yet.</i>");
                 }
                 else
                 {
@@ -464,87 +492,33 @@ namespace RebuildBotPlugin
                     for (int i = startMon; i < endMon; i++)
                     {
                         string mName = activeMonsters[i];
-                        Rect mRow = cursor.Next(22);
-                        GUI.Label(new Rect(mRow.x, mRow.y, 120, 22), mName);
-
-                        bool isWhite = BotConfigManager.Current.TargetMonsterWhitelist.Contains(mName);
-                        bool isBlack = BotConfigManager.Current.TargetMonsterBlacklist.Contains(mName);
-                        bool isAvoid = BotConfigManager.Current.MonsterAvoidanceList.Contains(mName);
-
-                        if (CustomButton(new Rect(mRow.x + 125, mRow.y, 65, 20), "White", isWhite, new Color(0.2f, 0.85f, 0.35f, 1f)))
-                        {
-                            if (isWhite)
-                            {
-                                BotConfigManager.Current.TargetMonsterWhitelist.Remove(mName);
-                                BotEngine.Instance?.LogEvent($"Removed '{mName}' from Whitelist.");
-                            }
-                            else
-                            {
-                                BotConfigManager.Current.TargetMonsterBlacklist.Remove(mName);
-                                BotConfigManager.Current.MonsterAvoidanceList.Remove(mName);
-                                BotConfigManager.Current.TargetMonsterWhitelist.Add(mName);
-                                BotEngine.Instance?.LogEvent($"Added '{mName}' to Whitelist.");
-                            }
-                            BotConfigManager.SaveConfig();
-                        }
-
-                        if (CustomButton(new Rect(mRow.x + 195, mRow.y, 65, 20), "Black", isBlack, new Color(0.85f, 0.25f, 0.25f, 1f)))
-                        {
-                            if (isBlack)
-                            {
-                                BotConfigManager.Current.TargetMonsterBlacklist.Remove(mName);
-                                BotEngine.Instance?.LogEvent($"Removed '{mName}' from Blacklist.");
-                            }
-                            else
-                            {
-                                BotConfigManager.Current.TargetMonsterWhitelist.Remove(mName);
-                                BotConfigManager.Current.MonsterAvoidanceList.Remove(mName);
-                                BotConfigManager.Current.TargetMonsterBlacklist.Add(mName);
-                                BotEngine.Instance?.LogEvent($"Added '{mName}' to Blacklist.");
-                            }
-                            BotConfigManager.SaveConfig();
-                        }
-
-                        if (CustomButton(new Rect(mRow.x + 265, mRow.y, 65, 20), "Avoid", isAvoid, new Color(0.95f, 0.55f, 0.15f, 1f)))
-                        {
-                            if (isAvoid)
-                            {
-                                BotConfigManager.Current.MonsterAvoidanceList.Remove(mName);
-                                BotEngine.Instance?.LogEvent($"Removed '{mName}' from Avoidance List.");
-                            }
-                            else
-                            {
-                                BotConfigManager.Current.TargetMonsterWhitelist.Remove(mName);
-                                BotConfigManager.Current.TargetMonsterBlacklist.Remove(mName);
-                                BotConfigManager.Current.MonsterAvoidanceList.Add(mName);
-                                BotEngine.Instance?.LogEvent($"Added '{mName}' to Avoidance List.");
-                            }
-                            BotConfigManager.SaveConfig();
-                        }
+                        Rect mRow = cursor.Next(24);
+                        GUI.Label(new Rect(mRow.x, mRow.y, 185, 22), mName);
+                        DrawMonsterCycleButton(mRow, mName);
                     }
                 }
 
                 cursor.Space(6);
 
                 // Potions & Consumables
-                var potions = BotEngine.Instance.GetInventoryPotionItems();
+                var potions = BotEngine.Instance.Survival.GetInventoryPotionItems();
                 int totalItems = potions.Count;
                 int itemsPerPage = 5;
                 int totalPages = Math.Max(1, (int)Math.Ceiling(totalItems / (float)itemsPerPage));
                 if (potionPageIndex >= totalPages) potionPageIndex = totalPages - 1;
                 if (potionPageIndex < 0) potionPageIndex = 0;
 
-                Rect rPotHeader = cursor.Next(20);
-                GUI.Label(new Rect(rPotHeader.x, rPotHeader.y, 220, 20), $"<b>Inventory Items & Potions ({totalItems}):</b>");
+                Rect rPotHeader = cursor.Next(22);
+                GUI.Label(new Rect(rPotHeader.x, rPotHeader.y, 220, 22), $"<b>Inventory Items & Potions ({totalItems}):</b>");
 
                 if (totalPages > 1)
                 {
-                    if (CustomButton(new Rect(rPotHeader.x + 230, rPotHeader.y, 25, 18), "<"))
+                    if (CustomButton(new Rect(rPotHeader.x + 230, rPotHeader.y, 25, 20), "<"))
                     {
                         if (potionPageIndex > 0) potionPageIndex--;
                     }
-                    GUI.Label(new Rect(rPotHeader.x + 260, rPotHeader.y, 50, 18), $"{potionPageIndex + 1}/{totalPages}");
-                    if (CustomButton(new Rect(rPotHeader.x + 315, rPotHeader.y, 25, 18), ">"))
+                    GUI.Label(new Rect(rPotHeader.x + 260, rPotHeader.y, 50, 22), $"{potionPageIndex + 1}/{totalPages}");
+                    if (CustomButton(new Rect(rPotHeader.x + 315, rPotHeader.y, 25, 20), ">"))
                     {
                         if (potionPageIndex < totalPages - 1) potionPageIndex++;
                     }
@@ -552,7 +526,7 @@ namespace RebuildBotPlugin
 
                 if (totalItems == 0)
                 {
-                    GUI.Label(cursor.Next(18), "<i>No items detected in inventory.</i>");
+                    GUI.Label(cursor.Next(22), "<i>No items detected in inventory.</i>");
                 }
                 else
                 {
@@ -560,7 +534,7 @@ namespace RebuildBotPlugin
                     int endIndex = Math.Min(startIndex + itemsPerPage, totalItems);
 
                     // Mouse wheel scrolling support over the inventory items section
-                    Rect invSectionRect = new Rect(windowRect.x + 10, rPotHeader.y, contentW, 20 + (endIndex - startIndex) * 24);
+                    Rect invSectionRect = new Rect(windowRect.x + 10, rPotHeader.y, contentW, 22 + (endIndex - startIndex) * 26);
                     if (e.type == EventType.ScrollWheel && invSectionRect.Contains(e.mousePosition))
                     {
                         if (e.delta.y > 0 && potionPageIndex < totalPages - 1)
@@ -578,14 +552,18 @@ namespace RebuildBotPlugin
                     for (int i = startIndex; i < endIndex; i++)
                     {
                         var p = potions[i];
-                        Rect pRow = cursor.Next(22);
+                        Rect pRow = cursor.Next(24);
                         bool isHpPotion = BotConfigManager.Current.HpPotionItemIds.Contains(p.itemId);
 
                         string nameDisplay = p.isUsable ? $"<b>{p.name}</b>" : p.name;
                         GUI.Label(new Rect(pRow.x, pRow.y, 185, 22), $"[{p.itemId}] {nameDisplay} (x{p.count})");
 
-                        // 1. HP Toggle Button (Green when active, dark gray when inactive)
-                        if (CustomButton(new Rect(pRow.x + 190, pRow.y, 45, 20), "HP", isHpPotion, new Color(0.2f, 0.85f, 0.35f, 1f)))
+                        // 1. HP Toggle Button (Green when active, Red when inactive)
+                        Color hpButtonColor = isHpPotion
+                            ? new Color(0.2f, 0.85f, 0.35f, 1f)  // Green
+                            : new Color(0.85f, 0.25f, 0.25f, 1f); // Red
+
+                        if (CustomButton(new Rect(pRow.x + 190, pRow.y, 45, 22), isHpPotion ? "<b>HP</b>" : "HP", true, hpButtonColor))
                         {
                             if (isHpPotion)
                             {
@@ -615,7 +593,7 @@ namespace RebuildBotPlugin
                         else
                             dispColor = new Color(0.25f, 0.65f, 0.95f, 1f);
 
-                        if (CustomButton(new Rect(pRow.x + 240, pRow.y, 85, 20), $"[{disp}]", true, dispColor))
+                        if (CustomButton(new Rect(pRow.x + 240, pRow.y, 85, 22), $"[{disp}]", true, dispColor))
                         {
                             string nextDisp;
                             if (string.Equals(disp, "Keep", StringComparison.OrdinalIgnoreCase))
