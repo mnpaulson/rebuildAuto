@@ -333,26 +333,53 @@ namespace RebuildBotPlugin.Controllers
             // 1.5. Auto-ASPD Potion Check (Refreshes immediately upon expiration on target map)
             TryUseAspdPotion(netManager, now);
 
-            // 2. Emergency Fly Wing Check (Low HP Escape)
+            // 2. Emergency Escape Check (Low HP Escape)
             if (BotConfigManager.Current.EmergencyFlyWingOnLowHp && player.MaxHp > 0)
             {
                 if (hpPercent <= BotConfigManager.Current.EmergencyFlyWingHpPercent)
                 {
                     if (isOutOfPotions) isRecovering = true;
-                    int wingId = GetAvailableFlyWingId();
-                    if (wingId > 0)
+
+                    // If critically low on HP and completely out of HP items on a field map:
+                    // If AutoReturnOnOutOfHpItems is enabled, immediately warp to town rather than spamming random Fly Wings!
+                    if (isOutOfPotions && BotConfigManager.Current.AutoReturnOnOutOfHpItems && !TownRoutineController.IsTownMap(netManager.CurrentMap))
                     {
-                        if (now - lastFlyWingTime >= flyWingCd)
+                        if (BotEngine.Instance != null && BotEngine.Instance.TownRoutine != null && !BotEngine.Instance.TownRoutine.IsActive)
                         {
+                            BotEngine.Instance.TownRoutine.StartRoutine("Emergency escape while out of HP items");
                             if (isSitting) netManager.ChangePlayerSitStand(false);
-                            netManager.SendUseItem(wingId);
-                            lastFlyWingTime = now;
-                            onTeleport?.Invoke();
-                            currentState = BotState.Fleeing;
-                            BotEngine.Instance?.LogEvent($"[Emergency Escape] HP critically low ({player.Hp}/{player.MaxHp} = {hpPercent:F0}% <= {BotConfigManager.Current.EmergencyFlyWingHpPercent}%)! Used Fly Wing (ID: {wingId}) to escape.");
+                            if (BotEngine.Instance.TownRoutine.ProcessTownRoutine(netManager, player, navigation, now))
+                            {
+                                currentState = BotState.TravelingToTargetMap;
+                                return true;
+                            }
                         }
-                        currentState = BotState.Fleeing;
-                        return true;
+                    }
+
+                    // For standard Fly Wing escape:
+                    // Escape if currently being attacked, if a hostile threat is in close range (<= 6 tiles),
+                    // or if this is the initial escape right when HP dropped critically low during engagement.
+                    var currentAttacker = targeting.GetAttackingMonster(player.CellPosition);
+                    var nearbyThreat = targeting.FindNearbyAggressiveThreat(player.CellPosition, 6.0f);
+                    bool inDanger = (currentAttacker != null || nearbyThreat != null || currentState == BotState.AttackingTarget || currentState == BotState.ApproachingTarget);
+
+                    if (inDanger)
+                    {
+                        int wingId = GetAvailableFlyWingId();
+                        if (wingId > 0)
+                        {
+                            if (now - lastFlyWingTime >= flyWingCd)
+                            {
+                                if (isSitting) netManager.ChangePlayerSitStand(false);
+                                netManager.SendUseItem(wingId);
+                                lastFlyWingTime = now;
+                                onTeleport?.Invoke();
+                                currentState = BotState.Fleeing;
+                                BotEngine.Instance?.LogEvent($"[Emergency Escape] HP critically low ({player.Hp}/{player.MaxHp} = {hpPercent:F0}% <= {BotConfigManager.Current.EmergencyFlyWingHpPercent}%)! Used Fly Wing (ID: {wingId}) to escape.");
+                            }
+                            currentState = BotState.Fleeing;
+                            return true;
+                        }
                     }
                 }
             }
