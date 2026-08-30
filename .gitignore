@@ -128,3 +128,4 @@ Recordings/
 RebuildBotPlugin/bin/
 RebuildBotPlugin/obj/
 scratch/
+deploy.bat

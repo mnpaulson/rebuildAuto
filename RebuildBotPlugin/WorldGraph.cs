@@ -14,6 +14,13 @@ namespace RebuildBotPlugin
         public int Height;
         public string DestMap;
         public Vector2Int DestPos;
+
+        // Kafra Teleport Properties
+        public bool IsKafraTeleport = false;
+        public int KafraMenuOption = -1;
+        public int ZenyCost = 0;
+
+        public Vector2Int CenterPos => new Vector2Int(FromPos.x + Math.Max(Width / 2, 0), FromPos.y + Math.Max(Height / 2, 0));
     }
 
     public class WorldGraph
@@ -27,25 +34,17 @@ namespace RebuildBotPlugin
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
 #pragma warning disable CS0649
-        [Serializable]
         private class EmbeddedWarpEntry
         {
-            public string FromMap;
-            public int FromX;
-            public int FromY;
-            public int Width;
-            public int Height;
-            public string DestMap;
-            public int DestX;
-            public int DestY;
+            public string FromMap { get; set; } = string.Empty;
+            public int FromX { get; set; }
+            public int FromY { get; set; }
+            public int Width { get; set; }
+            public int Height { get; set; }
+            public string DestMap { get; set; } = string.Empty;
+            public int DestX { get; set; }
+            public int DestY { get; set; }
         }
-
-        [Serializable]
-        private class EmbeddedWarpList
-        {
-            public List<EmbeddedWarpEntry> Items;
-        }
-#pragma warning restore CS0649
 
         public void LoadEmbeddedWarps()
         {
@@ -66,6 +65,8 @@ namespace RebuildBotPlugin
                         LoadWarpJson(json);
                     }
                 }
+
+                BakeKafraTeleports();
             }
             catch (Exception ex)
             {
@@ -77,14 +78,20 @@ namespace RebuildBotPlugin
         {
             if (string.IsNullOrWhiteSpace(json)) return;
 
-            // Wrap array into object for JsonUtility
-            string wrappedJson = $"{{\"Items\":{json}}}";
-            var list = JsonUtility.FromJson<EmbeddedWarpList>(wrappedJson);
-            if (list == null || list.Items == null) return;
+            var options = new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                IncludeFields = true
+            };
+
+            var list = System.Text.Json.JsonSerializer.Deserialize<List<EmbeddedWarpEntry>>(json, options);
+            if (list == null) return;
 
             int count = 0;
-            foreach (var item in list.Items)
+            foreach (var item in list)
             {
+                if (string.IsNullOrEmpty(item.FromMap)) continue;
+
                 var warp = new WarpConnection
                 {
                     FromMap = item.FromMap,
@@ -167,37 +174,220 @@ namespace RebuildBotPlugin
             return added;
         }
 
+        public void BakeKafraTeleports()
+        {
+            void AddKafraWarp(string fromMap, Vector2Int npcPos, string destMap, Vector2Int destPos, int menuOption, int cost)
+            {
+                var warp = new WarpConnection
+                {
+                    FromMap = fromMap,
+                    FromPos = npcPos,
+                    Width = 1,
+                    Height = 1,
+                    DestMap = destMap,
+                    DestPos = destPos,
+                    IsKafraTeleport = true,
+                    KafraMenuOption = menuOption,
+                    ZenyCost = cost
+                };
+
+                if (!MapNodes.TryGetValue(fromMap, out var mapWarps))
+                {
+                    mapWarps = new List<WarpConnection>();
+                    MapNodes[fromMap] = mapWarps;
+                }
+                mapWarps.Add(warp);
+            }
+
+            void AddKafraHub(string fromMap, Vector2Int[] positions, (string destMap, Vector2Int destPos, int menuOption, int cost)[] destinations)
+            {
+                foreach (var pos in positions)
+                {
+                    foreach (var d in destinations)
+                    {
+                        AddKafraWarp(fromMap, pos, d.destMap, d.destPos, d.menuOption, d.cost);
+                    }
+                }
+            }
+
+            // 1. prt_fild08 (Base Camp - Kafra Staff at 158, 362)
+            AddKafraHub("prt_fild08", new[] { new Vector2Int(158, 362) }, new[]
+            {
+                ("izlude", new Vector2Int(91, 105), 0, 600),
+                ("geffen", new Vector2Int(120, 39), 1, 1200),
+                ("payon", new Vector2Int(161, 58), 2, 1200),
+                ("morocc", new Vector2Int(156, 46), 3, 1200),
+                ("gef_fild10", new Vector2Int(52, 326), 4, 1700),
+                ("alberta", new Vector2Int(117, 56), 5, 1000)
+            });
+
+            // 2. Prontera (All 6 Kafras: SW, SE, South, East, West, North)
+            AddKafraHub("prontera", new[]
+            {
+                new Vector2Int(146, 89),
+                new Vector2Int(248, 42),
+                new Vector2Int(151, 29),
+                new Vector2Int(282, 200),
+                new Vector2Int(29, 207),
+                new Vector2Int(152, 326)
+            }, new[]
+            {
+                ("izlude", new Vector2Int(91, 105), 0, 600),
+                ("geffen", new Vector2Int(120, 39), 1, 1200),
+                ("payon", new Vector2Int(161, 58), 2, 1200),
+                ("morocc", new Vector2Int(156, 46), 3, 1200),
+                ("gef_fild10", new Vector2Int(52, 326), 4, 1700),
+                ("alberta", new Vector2Int(117, 56), 5, 1800)
+            });
+
+            // 3. Morroc (North Kafra at 160, 258 AND South Kafra at 156, 97)
+            AddKafraHub("morocc", new[]
+            {
+                new Vector2Int(160, 258),
+                new Vector2Int(156, 97)
+            }, new[]
+            {
+                ("prontera", new Vector2Int(116, 72), 0, 1200),
+                ("payon", new Vector2Int(161, 58), 1, 1200),
+                ("alberta", new Vector2Int(117, 56), 2, 1800),
+                ("comodo", new Vector2Int(209, 143), 3, 1800),
+                ("cmd_fild07", new Vector2Int(127, 134), 4, 1200)
+            });
+
+            // 4. Geffen (South Kafra at 120, 62 AND East Kafra at 203, 123)
+            AddKafraHub("geffen", new[]
+            {
+                new Vector2Int(120, 62),
+                new Vector2Int(203, 123)
+            }, new[]
+            {
+                ("prontera", new Vector2Int(116, 72), 0, 1200),
+                ("aldebaran", new Vector2Int(168, 112), 1, 1200),
+                ("gef_fild10", new Vector2Int(52, 326), 2, 1800),
+                ("mjolnir_02", new Vector2Int(99, 351), 3, 1800)
+            });
+
+            // 5. Payon (South Kafra at 181, 104 AND North Kafra at 175, 226)
+            AddKafraHub("payon", new[]
+            {
+                new Vector2Int(181, 104),
+                new Vector2Int(175, 226)
+            }, new[]
+            {
+                ("pay_arche", new Vector2Int(65, 138), 0, 200),
+                ("prontera", new Vector2Int(116, 72), 1, 1200),
+                ("alberta", new Vector2Int(117, 56), 2, 1200),
+                ("morocc", new Vector2Int(156, 46), 3, 1800)
+            });
+
+            // 6. Alberta (North Kafra at 28, 229 AND South Kafra at 113, 60)
+            AddKafraHub("alberta", new[]
+            {
+                new Vector2Int(28, 229),
+                new Vector2Int(113, 60)
+            }, new[]
+            {
+                ("payon", new Vector2Int(161, 58), 0, 1200),
+                ("morocc", new Vector2Int(156, 46), 1, 1800),
+                ("prontera", new Vector2Int(116, 72), 2, 1200)
+            });
+
+            // 7. Izlude (Kafra at 134, 88)
+            AddKafraHub("izlude", new[] { new Vector2Int(134, 88) }, new[]
+            {
+                ("geffen", new Vector2Int(120, 39), 0, 1200),
+                ("payon", new Vector2Int(161, 58), 1, 1200),
+                ("morocc", new Vector2Int(156, 46), 2, 1200),
+                ("aldebaran", new Vector2Int(168, 112), 3, 1800)
+            });
+
+            // 8. Aldebaran (Kafra at 143, 119)
+            AddKafraHub("aldebaran", new[] { new Vector2Int(143, 119) }, new[]
+            {
+                ("geffen", new Vector2Int(120, 39), 0, 1200),
+                ("yuno", new Vector2Int(158, 125), 1, 1200),
+                ("izlude", new Vector2Int(94, 103), 2, 1800),
+                ("mjolnir_02", new Vector2Int(99, 351), 3, 1700)
+            });
+
+            // 9. Orc Dungeon (gef_fild10 at 73, 340)
+            AddKafraHub("gef_fild10", new[] { new Vector2Int(73, 340) }, new[]
+            {
+                ("geffen", new Vector2Int(120, 39), 0, 1200),
+                ("prontera", new Vector2Int(116, 72), 1, 1200)
+            });
+
+            // 10. Archer Village (pay_arche at 55, 123)
+            AddKafraHub("pay_arche", new[] { new Vector2Int(55, 123) }, new[]
+            {
+                ("payon", new Vector2Int(161, 58), 0, 200),
+                ("prontera", new Vector2Int(116, 72), 1, 1200),
+                ("alberta", new Vector2Int(117, 56), 2, 1200),
+                ("morocc", new Vector2Int(156, 46), 3, 1800)
+            });
+
+            // 11. Comodo (Kafra at 195, 150)
+            AddKafraHub("comodo", new[] { new Vector2Int(195, 150) }, new[]
+            {
+                ("morocc", new Vector2Int(156, 46), 0, 1200),
+                ("alberta", new Vector2Int(117, 56), 1, 1800),
+                ("cmd_fild07", new Vector2Int(127, 134), 2, 1200)
+            });
+
+            Debug.Log($"[WorldGraph] Baked comprehensive Kafra teleport network into world graph.");
+        }
+
         public List<WarpConnection> FindRoute(string startMap, string targetMap)
         {
             if (string.Equals(startMap, targetMap, StringComparison.OrdinalIgnoreCase))
                 return new List<WarpConnection>();
 
-            var queue = new Queue<string>();
-            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var distances = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
             var parentWarp = new Dictionary<string, WarpConnection>(StringComparer.OrdinalIgnoreCase);
+            var pq = new List<(string map, float dist)>();
 
-            queue.Enqueue(startMap);
-            visited.Add(startMap);
+            distances[startMap] = 0f;
+            pq.Add((startMap, 0f));
 
             bool found = false;
-            while (queue.Count > 0)
+            while (pq.Count > 0)
             {
-                var current = queue.Dequeue();
-                if (string.Equals(current, targetMap, StringComparison.OrdinalIgnoreCase))
+                int bestIdx = 0;
+                float bestDist = pq[0].dist;
+                for (int i = 1; i < pq.Count; i++)
+                {
+                    if (pq[i].dist < bestDist)
+                    {
+                        bestDist = pq[i].dist;
+                        bestIdx = i;
+                    }
+                }
+
+                var current = pq[bestIdx];
+                pq.RemoveAt(bestIdx);
+
+                if (current.dist > distances[current.map])
+                    continue;
+
+                if (string.Equals(current.map, targetMap, StringComparison.OrdinalIgnoreCase))
                 {
                     found = true;
                     break;
                 }
 
-                if (MapNodes.TryGetValue(current, out var warps))
+                if (MapNodes.TryGetValue(current.map, out var warps))
                 {
                     foreach (var warp in warps)
                     {
-                        if (!visited.Contains(warp.DestMap))
+                        // Kafra teleports cost 0.2f, regular portals cost 1.0f
+                        float edgeCost = warp.IsKafraTeleport ? 0.2f : 1.0f;
+                        float newDist = current.dist + edgeCost;
+
+                        if (!distances.TryGetValue(warp.DestMap, out float oldDist) || newDist < oldDist)
                         {
-                            visited.Add(warp.DestMap);
+                            distances[warp.DestMap] = newDist;
                             parentWarp[warp.DestMap] = warp;
-                            queue.Enqueue(warp.DestMap);
+                            pq.Add((warp.DestMap, newDist));
                         }
                     }
                 }
@@ -221,10 +411,35 @@ namespace RebuildBotPlugin
             if (!MapNodes.TryGetValue(map, out var warps)) return false;
             foreach (var warp in warps)
             {
-                if (Vector2Int.Distance(cellPos, warp.FromPos) <= minDistance)
+                int minX = warp.FromPos.x;
+                int maxX = warp.FromPos.x + Math.Max(warp.Width, 1);
+                int minY = warp.FromPos.y;
+                int maxY = warp.FromPos.y + Math.Max(warp.Height, 1);
+
+                float clampX = Mathf.Clamp(cellPos.x, minX, maxX);
+                float clampY = Mathf.Clamp(cellPos.y, minY, maxY);
+
+                float dist = Vector2.Distance(cellPos, new Vector2(clampX, clampY));
+                if (dist <= minDistance)
                     return true;
             }
             return false;
+        }
+
+        public List<WarpConnection> GetWarpsConnecting(string fromMap, string destMap)
+        {
+            var result = new List<WarpConnection>();
+            if (MapNodes.TryGetValue(fromMap, out var warps))
+            {
+                foreach (var w in warps)
+                {
+                    if (string.Equals(w.DestMap, destMap, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Add(w);
+                    }
+                }
+            }
+            return result;
         }
     }
 }

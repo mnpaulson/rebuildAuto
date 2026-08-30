@@ -1,36 +1,57 @@
 using System;
+using System.IO;
 using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 
 namespace RebuildBotPlugin
 {
     [BepInPlugin("com.rebuild.automation", "Rebuild Automation Bot", "1.0.0")]
-    public class Plugin : BaseUnityPlugin
+    public class Plugin : BasePlugin
     {
+        public static Plugin Instance;
         private GameObject botContainer;
 
-        private void Awake()
+        public static void LogInfo(string msg)
         {
-            Logger.LogInfo("Plugin com.rebuild.automation is loading...");
+            Instance?.Log.LogInfo(msg);
+        }
+
+        public override void Load()
+        {
+            Instance = this;
+            Log.LogInfo("Plugin com.rebuild.automation is loading (IL2CPP)...");
+
             BotConfigManager.LoadConfig();
 
-            // Load embedded 1,700+ warp portal network (zero external directory dependency)
+            // Load embedded 1,700+ warp portal network
             WorldGraph.Instance.LoadEmbeddedWarps();
 
-            // Optional fallback/override from disk
-            string warpDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "RoRebuildServer", "GameConfig", "ServerData", "Script", "Warps");
-            if (System.IO.Directory.Exists(warpDir))
-            {
-                WorldGraph.Instance.LoadWarpDirectory(warpDir);
-            }
+            // Register custom MonoBehaviours into IL2CPP domain
+            ClassInjector.RegisterTypeInIl2Cpp<BotEngine>();
+            ClassInjector.RegisterTypeInIl2Cpp<BotGuiOverlay>();
 
             botContainer = new GameObject("RebuildBotContainer");
-            DontDestroyOnLoad(botContainer);
+            botContainer.hideFlags = HideFlags.HideAndDontSave;
+            UnityEngine.Object.DontDestroyOnLoad(botContainer);
 
             botContainer.AddComponent<BotEngine>();
             botContainer.AddComponent<BotGuiOverlay>();
 
-            Logger.LogInfo("Rebuild Automation Bot initialized successfully!");
+            // Apply Harmony patches for click-passthrough protection
+            try
+            {
+                var harmony = new HarmonyLib.Harmony("com.rebuild.automation");
+                harmony.PatchAll();
+                Log.LogInfo("Harmony patches applied successfully.");
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"Failed to apply Harmony patches: {ex.Message}");
+            }
+
+            Log.LogInfo("Rebuild Automation Bot initialized successfully!");
         }
     }
 }

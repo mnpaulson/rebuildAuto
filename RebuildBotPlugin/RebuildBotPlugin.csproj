@@ -1,29 +1,106 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFramework>net6.0</TargetFramework>
     <AssemblyTitle>RebuildBotPlugin</AssemblyTitle>
-    <Product>RagnarokRebuildTcp Automation Bot Plugin</Product>
+    <Product>RagnarokRebuild Automation Bot Plugin</Product>
     <Copyright>Copyright © 2026</Copyright>
     <Version>1.0.0.0</Version>
     <FileVersion>1.0.0.0</FileVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>10.0</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="BepInEx.Core" Version="5.4.21" />
-    <PackageReference Include="UnityEngine.Modules" Version="2021.3.33" />
-  </ItemGroup>
+    <!-- BepInEx 6 Core Assemblies -->
+    <Reference Include="BepInEx.Core">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\core\BepInEx.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\core\BepInEx.Unity.IL2CPP.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\core\Il2CppInterop.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Common">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\core\Il2CppInterop.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
 
-  <ItemGroup>
+    <!-- Interop Game and Engine Assemblies -->
+    <Reference Include="Assembly-CSharp">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.JSONSerializeModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="RebuildSharedData">
-      <HintPath>..\RoRebuildServer\RebuildSharedData\bin\Release\netstandard2.1\RebuildSharedData.dll</HintPath>
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\RebuildSharedData.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\core\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GameConfig">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\GameConfig.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppSystem">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\Il2CppSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="warps.json" />
   </ItemGroup>
+
+  <Target Name="PostBuildDeploy" AfterTargets="Build" Condition="'$(DeployOnBuild)' == 'true'">
+    <Message Importance="High" Text="[AutoDeploy] Copying $(TargetPath) to C:\games\RagnarokRebuild\BepInEx\plugins\..." />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="C:\games\RagnarokRebuild\BepInEx\plugins\" ContinueOnError="true" />
+  </Target>
 
 </Project>

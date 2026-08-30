@@ -1,7 +1,11 @@
 using System;
 using System.Collections.Generic;
+using Assets.Scripts;
+using Assets.Scripts.MapEditor;
 using Assets.Scripts.Network;
-using RebuildSharedData.Enum;
+using Assets.Scripts.PlayerControl;
+using Assets.Scripts.Sprites;
+using RebuildBotPlugin.Controllers;
 using UnityEngine;
 
 namespace RebuildBotPlugin
@@ -17,7 +21,9 @@ namespace RebuildBotPlugin
         LootingItem,
         Wandering,
         UsingPotion,
-        TravelingToTargetMap
+        TravelingToTargetMap,
+        Fleeing,
+        Resting
     }
 
     public class BotEngine : MonoBehaviour
@@ -25,23 +31,37 @@ namespace RebuildBotPlugin
         public static BotEngine Instance;
 
         public BotState CurrentState = BotState.Disabled;
-        public string CurrentTargetName = "None";
-        public int CurrentTargetHp = 0;
-        public int CurrentTargetMaxHp = 0;
-        public int KillCount = 0;
+        private BotState lastLoggedState = BotState.Disabled;
+
+        // Domain Controllers
+        public TargetingController Targeting { get; } = new TargetingController();
+        public CombatController Combat { get; } = new CombatController();
+        public NavigationController Navigation { get; } = new NavigationController();
+        public SurvivalController Survival { get; } = new SurvivalController();
+        public LootController Loot { get; } = new LootController();
+        public TownRoutineController TownRoutine { get; } = new TownRoutineController();
+        public MinimapMarkerController MinimapMarker { get; } = new MinimapMarkerController();
+        public ExpTracker ExpTracker { get; } = new ExpTracker();
+        public SkillController Skills { get; } = new SkillController();
+
+        // Backward-compatible properties forwarded to controllers
+        public string CurrentTargetName => Combat.CurrentTargetName;
+        public int CurrentTargetHp => Combat.CurrentTargetHp;
+        public int CurrentTargetMaxHp => Combat.CurrentTargetMaxHp;
+        public int KillCount { get => Combat.KillCount; set => Combat.KillCount = value; }
         public int LootCount = 0;
 
-        private float lastAttackTime;
-        private float lastLootTime;
-        private float lastWanderTime;
-        private float lastPotionTime;
-        private float lastTravelTime;
+        public Vector2Int CurrentExplorationWaypoint => Navigation.CurrentExplorationWaypoint;
+        public float WaypointAssignedTime => Navigation.WaypointAssignedTime;
+        public Vector2 LastWanderHeading => Navigation.LastWanderHeading;
 
-        private int lastTargetId = -1;
-        private int lastTargetHp = -1;
+        private float deathTimestamp = 0f;
+        private float lastRespawnTime = 0f;
+        private float lastLootTime = 0f;
+        private bool justRespawned = false;
+        private bool wasBotEnabled = false;
 
-        private List<string> actionLog = new List<string>();
-        private const int MaxLogEntries = 10;
+        public BotEngine(IntPtr ptr) : base(ptr) { }
 
         private void Awake()
         {
@@ -50,18 +70,62 @@ namespace RebuildBotPlugin
 
         private void Start()
         {
-            LogEvent("Bot engine initialized.");
+            LogEvent("Bot engine initialized (modular architecture).");
         }
 
-        public List<string> GetLogEntries() => actionLog;
+        public void RegisterAttacker(int monsterId) => Targeting.RegisterAttacker(monsterId);
+        public ServerControllable GetAttackingMonster(Vector2Int playerPos) => Targeting.GetAttackingMonster(playerPos);
+        public List<string> GetActiveMonstersOnMap() => Targeting.GetActiveMonstersOnMap();
+        public string GetCurrentMapName() => NetworkManager.Instance?.CurrentMap ?? "";
+        public List<(int itemId, string name, int count, bool isUsable)> GetInventoryPotionItems() => Survival.GetInventoryPotionItems();
+        public bool SafeMoveTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals = false, bool forwardOnly = false)
+            => Navigation.SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly);
+
+        public Vector2Int GetPlayerPosition()
+        {
+            var netManager = NetworkManager.Instance;
+            if (netManager != null && netManager.EntityList != null &&
+                netManager.EntityList.TryGetValue(netManager.PlayerId, out var player) && player != null)
+            {
+                return player.CellPosition;
+            }
+            return Vector2Int.zero;
+        }
 
         public void LogEvent(string msg)
         {
-            string entry = $"[{DateTime.Now:HH:mm:ss}] {msg}";
-            actionLog.Add(entry);
-            if (actionLog.Count > MaxLogEntries)
-                actionLog.RemoveAt(0);
-            Debug.Log($"[RebuildBotPlugin] {entry}");
+            Plugin.LogInfo($"[{DateTime.Now:HH:mm:ss}] {msg}");
+        }
+
+        public void LogDebug(string msg)
+        {
+            if (BotConfigManager.Current.VerboseLogging)
+            {
+                Plugin.LogInfo($"[{DateTime.Now:HH:mm:ss}] [DEBUG] {msg}");
+            }
+        }
+
+        private void LateUpdate()
+        {
+            if (CurrentState != lastLoggedState)
+            {
+                LogDebug($"[State] {lastLoggedState} -> {CurrentState}");
+                lastLoggedState = CurrentState;
+            }
+
+            MinimapMarker.UpdateWaypointMarker(
+                BotConfigManager.Current.Enabled,
+                BotConfigManager.Current.AutoWander,
+                CurrentState,
+                Navigation.CurrentExplorationWaypoint);
+        }
+
+        private void OnTeleportReset()
+        {
+            Combat.Clear();
+            Loot.Clear();
+            Navigation.ResetWander();
+            Skills.Clear();
         }
 
         private void Update()
@@ -69,261 +133,228 @@ namespace RebuildBotPlugin
             if (!BotConfigManager.Current.Enabled)
             {
                 CurrentState = BotState.Disabled;
+                wasBotEnabled = false;
                 return;
             }
 
             var netManager = NetworkManager.Instance;
-            if (netManager == null)
+            if (netManager == null || netManager.EntityList == null ||
+                !netManager.EntityList.TryGetValue(netManager.PlayerId, out var player) || player == null)
             {
                 CurrentState = BotState.Idle;
                 return;
             }
 
-            if (!netManager.EntityList.TryGetValue(netManager.PlayerId, out var player) || player == null)
-            {
-                CurrentState = BotState.Idle;
-                return;
-            }
-
-            if (player.Hp <= 0 || player.CharacterState == CharacterState.Dead)
+            // Player Death Handling
+            if (player.Hp <= 0 || !player.IsCharacterAlive)
             {
                 CurrentState = BotState.PlayerDead;
+                if (deathTimestamp == 0f)
+                {
+                    deathTimestamp = Time.time;
+                    LogEvent($"[Death] Character died at ({player.CellPosition.x}, {player.CellPosition.y}) on map '{netManager.CurrentMap}'.");
+                    Combat.Clear();
+                    Loot.Clear();
+                    Targeting.Clear();
+                }
+
+                if (BotConfigManager.Current.AutoRespawn)
+                {
+                    if (Time.time - deathTimestamp >= 2.0f && Time.time - lastRespawnTime >= 3.0f)
+                    {
+                        netManager.SendRespawn(false);
+                        lastRespawnTime = Time.time;
+                        justRespawned = true;
+                        LogEvent("[Respawn] Sent respawn packet (returning to save point)...");
+                    }
+                }
                 return;
             }
 
-            // Update player's sector visit timestamp in heatmap
+            deathTimestamp = 0f;
+
+            if (justRespawned)
+            {
+                justRespawned = false;
+                if (string.Equals(netManager.CurrentMap, TownRoutineController.BaseMap, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (TownRoutineController.HasSuppliesNeeded() || TownRoutineController.HasItemsToSell() || TownRoutineController.HasItemsToStore())
+                    {
+                        TownRoutine.StartRoutine("Respawn at base");
+                    }
+                }
+            }
+
+            if (!wasBotEnabled)
+            {
+                wasBotEnabled = true;
+                if (string.Equals(netManager.CurrentMap, TownRoutineController.BaseMap, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (TownRoutineController.HasSuppliesNeeded() || TownRoutineController.HasItemsToSell() || TownRoutineController.HasItemsToStore())
+                    {
+                        TownRoutine.StartRoutine("Bot started in base");
+                    }
+                }
+            }
+
+            // Map navigation & heatmap tracking
             MapHeatmap.Instance.UpdatePlayerPosition(netManager.CurrentMap, player.CellPosition);
+
+            var walkProvider = RoWalkDataProvider.Instance;
+            if (walkProvider != null && walkProvider.WalkData != null)
+            {
+                MapNavMesh.Instance.AnalyzeMap(netManager.CurrentMap, walkProvider.WalkData);
+            }
+
+            // EXP Tracker Baseline
+            if (ExpTracker.CurrentBaseExp == -1 && CameraFollower.Instance != null && player.Level > 0)
+            {
+                int max = CameraFollower.Instance.ExpForLevel(player.Level);
+                int cur = PlayerState.Instance != null ? PlayerState.Instance.Exp : 0;
+                if (max > 0) ExpTracker.UpdateBaseExp(cur, max);
+            }
 
             float now = Time.time;
 
-            // 1. Auto-Potion Check
-            if (BotConfigManager.Current.AutoPotion && now - lastPotionTime > 0.5f)
+            // Cleanup temporary loot blacklists
+            Loot.CleanupLootAttempts(now);
+
+            // PRIORITY 1: SURVIVAL & AVOIDANCE (Potions, Low HP Fly Wing, Boss Escape, Sit-Rest)
+            if (Survival.ProcessSurvival(netManager, player, now, Targeting, Navigation, OnTeleportReset, ref CurrentState))
             {
-                if (player.MaxHp > 0 && ((float)player.Hp / player.MaxHp * 100.0f) < BotConfigManager.Current.HpPotionPercent)
-                {
-                    netManager.SendUseItem(BotConfigManager.Current.HpPotionItemId);
-                    lastPotionTime = now;
-                    LogEvent($"Used HP Potion (ID: {BotConfigManager.Current.HpPotionItemId}). HP: {player.Hp}/{player.MaxHp}");
-                }
-                else if (player.MaxSp > 0 && ((float)player.Sp / player.MaxSp * 100.0f) < BotConfigManager.Current.SpPotionPercent)
-                {
-                    netManager.SendUseItem(BotConfigManager.Current.SpPotionItemId);
-                    lastPotionTime = now;
-                    LogEvent($"Used SP Potion (ID: {BotConfigManager.Current.SpPotionItemId}). SP: {player.Sp}/{player.MaxSp}");
-                }
+                return;
             }
 
-            // 2. Cross-Map Travel Check (AutoTravel)
-            if (BotConfigManager.Current.AutoTravel &&
-                !string.IsNullOrWhiteSpace(BotConfigManager.Current.TargetMap) &&
-                !string.Equals(netManager.CurrentMap, BotConfigManager.Current.TargetMap, StringComparison.OrdinalIgnoreCase))
+            // PRIORITY 1.5: BUFFS & SUPPORT RECOVERY (Self-Buffs, Party Heals, Blessing/Agi)
+            if (!TownRoutine.IsActive && Skills.ProcessBuffsAndRecovery(netManager, player, now))
             {
-                if (now - lastTravelTime >= 1.5f)
-                {
-                    var route = WorldGraph.Instance.FindRoute(netManager.CurrentMap, BotConfigManager.Current.TargetMap);
-                    if (route != null && route.Count > 0)
-                    {
-                        var nextWarp = route[0];
-                        netManager.SendMoveRequest(netManager.CurrentMap, nextWarp.FromPos.x, nextWarp.FromPos.y);
-                        lastTravelTime = now;
-                        CurrentState = BotState.TravelingToTargetMap;
-                        LogEvent($"Cross-Map Travel: Route to {BotConfigManager.Current.TargetMap} via warp at {nextWarp.FromMap} ({nextWarp.FromPos.x}, {nextWarp.FromPos.y})");
-                        return;
-                    }
-                    else
-                    {
-                        LogEvent($"[Warning] No valid warp route found from '{netManager.CurrentMap}' to '{BotConfigManager.Current.TargetMap}'.");
-                    }
-                }
+                return;
             }
 
-            // 3. Auto-Loot Check
-            if (BotConfigManager.Current.AutoLoot && now - lastLootTime >= BotConfigManager.Current.LootCooldownSeconds)
-            {
-                var nearestItem = FindNearestGroundItem(player.CellPosition);
-                if (nearestItem != null)
-                {
-                    netManager.SendPickUpItem(nearestItem.EntityId);
-                    lastLootTime = now;
-                    LootCount++;
-                    CurrentState = BotState.LootingItem;
-                    LogEvent($"Looting item: {nearestItem.ItemName} (Entity: {nearestItem.EntityId})");
-                    return;
-                }
-            }
-
-            // 4. Auto-Attack Check
+            // PRIORITY 2: SELF-DEFENSE (Any monster currently attacking player)
+            ServerControllable attacker = null;
             if (BotConfigManager.Current.AutoAttack)
             {
-                var targetMonster = FindBestTargetMonster(player.CellPosition);
-                if (targetMonster != null)
+                attacker = Targeting.GetAttackingMonster(player.CellPosition);
+            }
+
+            if (attacker != null)
+            {
+                Combat.CurrentLockedTargetId = attacker.Id;
+                Combat.ExecuteCombatAction(netManager, player, attacker, now, Navigation, Targeting, ref CurrentState);
+                return;
+            }
+
+            // PRIORITY 3: ONGOING COMBAT (Stick with engaged target until defeated)
+            ServerControllable lockedTarget = null;
+            if (BotConfigManager.Current.AutoAttack && Combat.CurrentLockedTargetId != -1)
+            {
+                lockedTarget = Combat.GetLockedTarget(player.CellPosition);
+            }
+
+            // Aggressive Threat Preemption:
+            // If current target is passive, but an aggressive monster is chasing or in close range (<= 8 tiles),
+            // immediately preempt and switch targets to defend against the threat!
+            if (lockedTarget != null && BotConfigManager.Current.PrioritizeAggressiveMonsters)
+            {
+                if (!Targeting.IsMonsterAggressive(lockedTarget.Name) && !Targeting.IsAttackingPlayer(lockedTarget.Id))
                 {
-                    CurrentTargetName = targetMonster.Name;
-                    CurrentTargetHp = targetMonster.Hp;
-                    CurrentTargetMaxHp = targetMonster.MaxHp;
-
-                    // Track kill count when monster HP drops to 0
-                    if (lastTargetId == targetMonster.Id && lastTargetHp > 0 && targetMonster.Hp <= 0)
+                    var nearbyThreat = Targeting.FindNearbyAggressiveThreat(player.CellPosition, 8.0f);
+                    if (nearbyThreat != null && nearbyThreat.Id != lockedTarget.Id)
                     {
-                        KillCount++;
-                        LogEvent($"Defeated target monster {targetMonster.Name}!");
+                        LogEvent($"[Combat] Preempting passive '{lockedTarget.Name}' -> engaging aggressive threat '{nearbyThreat.Name}' (dist: {Vector2.Distance(player.CellPosition, nearbyThreat.CellPosition):F1})!");
+                        Combat.CurrentLockedTargetId = nearbyThreat.Id;
+                        lockedTarget = nearbyThreat;
                     }
-                    lastTargetId = targetMonster.Id;
-                    lastTargetHp = targetMonster.Hp;
+                }
+            }
 
-                    float dist = Vector2.Distance(player.CellPosition, targetMonster.CellPosition);
+            if (lockedTarget != null)
+            {
+                Combat.ExecuteCombatAction(netManager, player, lockedTarget, now, Navigation, Targeting, ref CurrentState);
+                return;
+            }
+            else
+            {
+                Combat.OnTargetDefeated();
+            }
 
-                    if (dist <= BotConfigManager.Current.AttackRange)
+            // PRIORITY 3.5: TOWN ROUTINE (Return to base, sell, and store when overweight)
+            if (TownRoutine.ProcessTownRoutine(netManager, player, Navigation, now))
+            {
+                return;
+            }
+
+            // PRIORITY 4: CROSS-MAP TRAVEL TO TARGET MAP (AutoTravel)
+            if (!TownRoutine.IsActive && (now - TownRoutine.LastCompletedTime >= 2.5f) && Navigation.ProcessTravel(netManager, player, now, ref CurrentState))
+            {
+                return;
+            }
+
+            // PRIORITY 5: AUTO-LOOT (Pick up all items in radius before engaging new passive monsters)
+            if (BotConfigManager.Current.AutoLoot)
+            {
+                if (Loot.PendingLootItemId != -1)
+                {
+                    if (netManager.GroundItemList == null || !netManager.GroundItemList.ContainsKey(Loot.PendingLootItemId))
                     {
-                        if (now - lastAttackTime >= BotConfigManager.Current.AttackCooldownSeconds)
+                        LootCount++;
+                        LogEvent($"Collected loot item! Total Loot: {LootCount}");
+                        Loot.PendingLootItemId = -1;
+                    }
+                }
+
+                var nearestItem = Loot.FindNearestGroundItem(player.CellPosition);
+                if (nearestItem != null)
+                {
+                    if (now - lastLootTime >= BotConfigManager.Current.LootCooldownSeconds)
+                    {
+                        Loot.PendingLootItemId = nearestItem.EntityId;
+                        Loot.TrackLootAttempt(nearestItem.EntityId, now);
+
+                        Vector2 itemWorldPos = new Vector2(nearestItem.transform.position.x, nearestItem.transform.position.z);
+                        Vector2Int itemCellPos = new Vector2Int(Mathf.RoundToInt(itemWorldPos.x), Mathf.RoundToInt(itemWorldPos.y));
+                        if (Vector2.Distance(player.CellPosition, itemCellPos) > 1.8f)
                         {
-                            netManager.SendAttack(targetMonster.Id);
-                            lastAttackTime = now;
-                            CurrentState = BotState.AttackingTarget;
+                            Navigation.NavigateTowards(player.CellPosition, itemCellPos, avoidPortals: true, hopDistance: 8);
                         }
-                    }
-                    else
-                    {
-                        // Move closer to monster
-                        netManager.SendMoveRequest(netManager.CurrentMap, targetMonster.CellPosition.x, targetMonster.CellPosition.y);
-                        CurrentState = BotState.ApproachingTarget;
+
+                        netManager.SendPickUpItem(nearestItem.EntityId);
+                        lastLootTime = now;
+                        CurrentState = BotState.LootingItem;
+                        LogEvent($"Moving to loot item: {nearestItem.ItemName} (ID: {nearestItem.EntityId})");
                     }
                     return;
                 }
                 else
                 {
-                    CurrentTargetName = "None";
-                    CurrentTargetHp = 0;
-                    CurrentTargetMaxHp = 0;
+                    Loot.PendingLootItemId = -1;
                 }
             }
 
-            // 5. Heatmap Auto-Wander Check (Systematic Map Exploration)
-            if (BotConfigManager.Current.AutoWander && now - lastWanderTime >= BotConfigManager.Current.WanderCooldownSeconds)
+            // PRIORITY 6: INITIATE NEW COMBAT (Only when all items in radius are looted and not in recovery/town routine)
+            ServerControllable newTarget = null;
+            if (BotConfigManager.Current.AutoAttack && !Survival.IsRecovering && !TownRoutine.IsActive)
             {
-                Vector2Int targetPos = MapHeatmap.Instance.FindColdestSectorTarget(
-                    netManager.CurrentMap,
-                    player.CellPosition,
-                    BotConfigManager.Current.PortalSafetyRadius);
+                newTarget = Targeting.FindBestTargetMonster(player.CellPosition);
+            }
 
-                netManager.SendMoveRequest(netManager.CurrentMap, targetPos.x, targetPos.y);
-                lastWanderTime = now;
-                CurrentState = BotState.Wandering;
-                LogEvent($"Exploring map to coldest sector target ({targetPos.x}, {targetPos.y})");
+            if (newTarget != null)
+            {
+                Combat.CurrentLockedTargetId = newTarget.Id;
+                Combat.ExecuteCombatAction(netManager, player, newTarget, now, Navigation, Targeting, ref CurrentState);
+                return;
+            }
+
+            // PRIORITY 7: FLUID MACRO-EXPLORATION AUTO-WANDER
+            if (BotConfigManager.Current.AutoWander && !Survival.IsRecovering && !TownRoutine.IsActive)
+            {
+                Survival.TryUseAspdPotion(netManager, now);
+                Navigation.ProcessWander(netManager, player, now, ref CurrentState);
                 return;
             }
 
             CurrentState = BotState.Idle;
-        }
-
-        private ServerControllable FindBestTargetMonster(Vector2Int playerPos)
-        {
-            var netManager = NetworkManager.Instance;
-            if (netManager == null) return null;
-
-            ServerControllable bestTarget = null;
-            float minDistance = float.MaxValue;
-
-            foreach (var kvp in netManager.EntityList)
-            {
-                var entity = kvp.Value;
-                if (entity == null || entity.Id == netManager.PlayerId)
-                    continue;
-
-                if (entity.CharacterType == CharacterType.Monster && entity.IsAttackable && entity.Hp > 0 && entity.CharacterState != CharacterState.Dead)
-                {
-                    // Whitelist check
-                    if (BotConfigManager.Current.TargetMonsterWhitelist.Count > 0 &&
-                        !BotConfigManager.Current.TargetMonsterWhitelist.Contains(entity.Name))
-                        continue;
-
-                    // Blacklist check
-                    if (BotConfigManager.Current.TargetMonsterBlacklist.Contains(entity.Name))
-                        continue;
-
-                    float dist = Vector2.Distance(playerPos, entity.CellPosition);
-                    if (dist <= BotConfigManager.Current.SearchRadius && dist < minDistance)
-                    {
-                        minDistance = dist;
-                        bestTarget = entity;
-                    }
-                }
-            }
-            return bestTarget;
-        }
-
-        private GroundItem FindNearestGroundItem(Vector2Int playerPos)
-        {
-            var netManager = NetworkManager.Instance;
-            if (netManager == null) return null;
-
-            GroundItem bestItem = null;
-            float minDistance = float.MaxValue;
-
-            foreach (var kvp in netManager.GroundItemList)
-            {
-                var item = kvp.Value;
-                if (item == null) continue;
-
-                // Whitelist check
-                if (BotConfigManager.Current.LootItemWhitelist.Count > 0 &&
-                    !BotConfigManager.Current.LootItemWhitelist.Contains(item.ItemName))
-                    continue;
-
-                // Blacklist check
-                if (BotConfigManager.Current.LootItemBlacklist.Contains(item.ItemName))
-                    continue;
-
-                Vector2 itemCell = new Vector2(item.transform.position.x, item.transform.position.z);
-                float dist = Vector2.Distance(playerPos, itemCell);
-                if (dist <= BotConfigManager.Current.SearchRadius && dist < minDistance)
-                {
-                    minDistance = dist;
-                    bestItem = item;
-                }
-            }
-            return bestItem;
-        }
-
-        public string GetCurrentMapName()
-        {
-            var netManager = NetworkManager.Instance;
-            return netManager != null ? netManager.CurrentMap : "Unknown";
-        }
-
-        public List<string> GetActiveMonstersOnMap()
-        {
-            var result = new HashSet<string>();
-            var netManager = NetworkManager.Instance;
-            if (netManager != null)
-            {
-                foreach (var kvp in netManager.EntityList)
-                {
-                    var entity = kvp.Value;
-                    if (entity != null && entity.CharacterType == CharacterType.Monster && !string.IsNullOrWhiteSpace(entity.Name))
-                    {
-                        result.Add(entity.Name);
-                    }
-                }
-            }
-            return new List<string>(result);
-        }
-
-        public List<(int itemId, string name, int count)> GetInventoryPotionItems()
-        {
-            var list = new List<(int itemId, string name, int count)>();
-            var inv = Assets.Scripts.PlayerControl.ClientInventory.Instance;
-            if (inv != null && inv.Items != null)
-            {
-                foreach (var item in inv.Items)
-                {
-                    if (item.ItemData != null)
-                    {
-                        list.Add((item.ItemData.Id, item.ItemData.Name, item.Count));
-                    }
-                }
-            }
-            return list;
         }
     }
 }
