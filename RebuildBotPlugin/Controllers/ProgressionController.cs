@@ -10,8 +10,10 @@ namespace RebuildBotPlugin.Controllers
     public class ProgressionController
     {
         private float lastEvaluationTime = 0f;
+        private float lastStatActionTime = 0f;
         private float lastSkillActionTime = 0f;
         private const float EvaluationCadence = 0.8f;
+        private const float StatActionCadence = 1.5f;
         private const float SkillActionCadence = 0.6f;
 
         public string ActiveStatGoalText { get; private set; } = "None";
@@ -20,6 +22,7 @@ namespace RebuildBotPlugin.Controllers
         public void Reset()
         {
             lastEvaluationTime = 0f;
+            lastStatActionTime = 0f;
             lastSkillActionTime = 0f;
             ActiveStatGoalText = "None";
             ActiveSkillGoalText = "None";
@@ -39,7 +42,7 @@ namespace RebuildBotPlugin.Controllers
 
             if (BotConfigManager.Current.AutoStatAllocation)
             {
-                ProcessStatAllocation(playerState, netManager);
+                ProcessStatAllocation(playerState, netManager, now);
             }
             else
             {
@@ -56,7 +59,13 @@ namespace RebuildBotPlugin.Controllers
             }
         }
 
-        private void ProcessStatAllocation(PlayerState playerState, NetworkManager netManager)
+        public static int GetStatIncrementCost(int currentStat)
+        {
+            if (currentStat < 1 || currentStat >= 99) return int.MaxValue;
+            return (currentStat / 10) + 2;
+        }
+
+        private void ProcessStatAllocation(PlayerState playerState, NetworkManager netManager, float now)
         {
             int unspentPoints = playerState.GetData(PlayerStat.StatPoints);
             var plan = BotConfigManager.Current.StatBuildPlan;
@@ -86,43 +95,25 @@ namespace RebuildBotPlugin.Controllers
 
                 foundActiveGoal = true;
 
-                if (unspentPoints <= 0)
+                int cost = GetStatIncrementCost(currentStat);
+
+                if (unspentPoints >= cost)
                 {
-                    int nextCost = 2 + (currentStat - 1) / 10;
-                    ActiveStatGoalText = $"{goal.Stat.ToUpperInvariant()} -> {goal.Target} (Cur: {currentStat}, Need: {nextCost} pts)";
-                    break;
-                }
+                    if (now - lastStatActionTime >= StatActionCadence)
+                    {
+                        lastStatActionTime = now;
+                        int[] adjustments = new int[6];
+                        adjustments[statIndex] = 1;
 
-                // Calculate bulk affordable increments toward targetCap
-                int tempStat = currentStat;
-                int pointsRemaining = unspentPoints;
-                int pointsToAdd = 0;
+                        netManager.SendApplyStatPoints(adjustments);
+                        BotEngine.Instance?.LogEvent($"[Progression] Auto-Allocated +1 {goal.Stat.ToUpperInvariant()} ({currentStat} -> {currentStat + 1} / Target: {goal.Target}, Cost: {cost} pts, Remaining: {unspentPoints - cost}).");
+                    }
 
-                while (tempStat < targetCap)
-                {
-                    int cost = 2 + (tempStat - 1) / 10;
-                    if (pointsRemaining < cost)
-                        break;
-
-                    pointsRemaining -= cost;
-                    tempStat++;
-                    pointsToAdd++;
-                }
-
-                if (pointsToAdd > 0)
-                {
-                    int[] adjustments = new int[6];
-                    adjustments[statIndex] = pointsToAdd;
-
-                    netManager.SendApplyStatPoints(adjustments);
-                    BotEngine.Instance?.LogEvent($"[Progression] Auto-Allocated +{pointsToAdd} {goal.Stat.ToUpperInvariant()} ({currentStat} -> {currentStat + pointsToAdd} / Target: {goal.Target}, Remaining Stat Points: {pointsRemaining}).");
-
-                    ActiveStatGoalText = $"{goal.Stat.ToUpperInvariant()} -> {goal.Target} (Cur: {currentStat + pointsToAdd})";
+                    ActiveStatGoalText = $"{goal.Stat.ToUpperInvariant()} -> {goal.Target} (Cur: {currentStat + 1})";
                 }
                 else
                 {
-                    int nextCost = 2 + (currentStat - 1) / 10;
-                    ActiveStatGoalText = $"{goal.Stat.ToUpperInvariant()} -> {goal.Target} (Cur: {currentStat}, Need: {nextCost} pts, Have: {unspentPoints})";
+                    ActiveStatGoalText = $"{goal.Stat.ToUpperInvariant()} -> {goal.Target} (Cur: {currentStat}, Need: {cost} pts, Have: {unspentPoints})";
                 }
 
                 // Strict sequential order: do not advance to subsequent goals until this one is satisfied

@@ -1,5 +1,6 @@
 using Assets.Scripts;
 using Assets.Scripts.Network;
+using Assets.Scripts.PlayerControl;
 using UnityEngine;
 
 namespace RebuildBotPlugin.Controllers
@@ -106,11 +107,21 @@ namespace RebuildBotPlugin.Controllers
                 lastDistanceToTarget = dist;
                 navigation.ResetWander(); // Halt wander pre-click step immediately
 
+                // Auto-equip best arrow for target if character is Archer class
+                if (BotConfigManager.Current.AutoEquipBestArrow)
+                {
+                    Services.ArrowHelper.EquipBestArrowForTarget(netManager, target);
+                }
+
                 // Immediately command server to attack/pursue target
                 netManager.SendAttack(target.Id);
                 lastAttackTime = now;
 
                 BotEngine.Instance?.LogEvent($"[Combat] Engaged {target.Name} (ID: {target.Id}, dist: {dist:F1} tiles). Initiating attack pursuit!");
+            }
+            else if (BotConfigManager.Current.AutoEquipBestArrow)
+            {
+                Services.ArrowHelper.EquipBestArrowForTarget(netManager, target);
             }
             lastTargetId = target.Id;
             lastTargetHp = target.Hp;
@@ -134,10 +145,11 @@ namespace RebuildBotPlugin.Controllers
                 return;
             }
 
-            // Determine effective combat range (supports ranged spells / bow range)
-            float combatRange = BotConfigManager.Current.AttackRange;
+            // Determine dynamic attack range based on server stats, weapon class, and skills
+            float combatRange = GetEffectiveAttackRange();
+            bool hasLos = Pathfinder.HasLineOfSight(player.CellPosition, target.CellPosition);
 
-            if (dist <= combatRange)
+            if (dist <= combatRange && hasLos)
             {
                 targetApproachStartTime = now; // Reset timeout while actively attacking
                 targetApproachProgressTime = now;
@@ -206,11 +218,44 @@ namespace RebuildBotPlugin.Controllers
 
                     if (now - lastApproachLogTime >= 1.5f)
                     {
-                        BotEngine.Instance?.LogEvent($"[Combat] Approaching {target.Name} (ID: {target.Id}, dist: {dist:F1} > {combatRange:F1}) towards attack tile ({attackTile.x}, {attackTile.y}).");
+                        string reason = !hasLos ? "(LOS blocked)" : $"(dist: {dist:F1} > {combatRange:F1})";
+                        BotEngine.Instance?.LogEvent($"[Combat] Approaching {target.Name} (ID: {target.Id}, {reason}) towards attack tile ({attackTile.x}, {attackTile.y}).");
                         lastApproachLogTime = now;
                     }
                 }
             }
+        }
+
+        public static float GetEffectiveAttackRange()
+        {
+            var state = Assets.Scripts.PlayerControl.PlayerState.Instance;
+            if (state != null)
+            {
+                int serverRange = state.GetStat(RebuildSharedData.Enum.EntityStats.CharacterStat.Range);
+                if (serverRange > 1)
+                {
+                    // Ranged weapon (Bow, Spear, Gun, etc.) - exact server stat
+                    return (float)serverRange;
+                }
+                else if (serverRange == 1)
+                {
+                    // Melee weapon - 1.8f provides a smooth buffer without colliding inside monster model
+                    return 1.8f;
+                }
+
+                // Pre-sync fallback based on weapon class or Archer job
+                var cam = CameraFollower.Instance;
+                int weaponClass = cam != null && cam.TargetControllable != null ? cam.TargetControllable.WeaponClass : 0;
+
+                if (weaponClass == 12 || state.JobId == 2 || state.JobId == 8) // Bow / Archer
+                {
+                    int vultureLvl = state.KnownSkills != null && state.KnownSkills.TryGetValue(RebuildSharedData.Enum.CharacterSkill.VultureEye, out int lvl) ? lvl : 0;
+                    return 5f + vultureLvl;
+                }
+                if (weaponClass == 4 || weaponClass == 5) // Spear
+                    return 2.0f;
+            }
+            return 1.8f;
         }
     }
 }

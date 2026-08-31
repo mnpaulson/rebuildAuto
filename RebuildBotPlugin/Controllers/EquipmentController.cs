@@ -18,6 +18,7 @@ namespace RebuildBotPlugin.Controllers
     {
         private float lastEquipCheckTime = 0f;
         private const float EquipCheckInterval = 2.0f; // Check every 2s
+        private readonly Dictionary<int, float> failedEquipAttempts = new Dictionary<int, float>();
 
         public void ProcessAutoEquip(NetworkManager netManager, ServerControllable player, float now)
         {
@@ -46,14 +47,11 @@ namespace RebuildBotPlugin.Controllers
             bool acc1Empty = state.EquippedItems[8] == 0;
             bool acc2Empty = state.EquippedItems[9] == 0;
 
-            bool hasAnyEmptySlot = headTopEmpty || headMidEmpty || headBottomEmpty || bodyEmpty ||
-                                  weaponEmpty || shieldEmpty || garmentEmpty || footgearEmpty ||
-                                  acc1Empty || acc2Empty;
-
-            if (!hasAnyEmptySlot) return;
-
             // Track bag IDs that are currently equipped
             var equippedBagSlots = new HashSet<int>();
+            int weaponBagId = state.EquippedItems[4];
+            bool isHoldingTwoHanded = false;
+
             for (int i = 0; i < state.EquippedItems.Length; i++)
             {
                 if (state.EquippedItems[i] > 0)
@@ -62,12 +60,45 @@ namespace RebuildBotPlugin.Controllers
 
             foreach (var kvp in inv)
             {
+                var itm = kvp.Value;
+                if (itm != null && itm.BagSlotId == weaponBagId && itm.ItemData != null)
+                {
+                    var wData = itm.ItemData;
+                    if (wData.ItemClass == ItemClass.Weapon && (wData.Position == EquipPosition.BothHands || (wData.Position & EquipPosition.OffHand) != 0))
+                    {
+                        isHoldingTwoHanded = true;
+                    }
+                    break;
+                }
+            }
+
+            if (isHoldingTwoHanded)
+            {
+                shieldEmpty = false;
+            }
+
+            bool hasAnyEmptySlot = headTopEmpty || headMidEmpty || headBottomEmpty || bodyEmpty ||
+                                  weaponEmpty || shieldEmpty || garmentEmpty || footgearEmpty ||
+                                  acc1Empty || acc2Empty;
+
+            if (!hasAnyEmptySlot) return;
+
+            foreach (var kvp in inv)
+            {
                 var item = kvp.Value;
                 if (item == null || item.ItemData == null || item.Count <= 0) continue;
                 if (equippedBagSlots.Contains(item.BagSlotId)) continue;
 
+                // Don't re-spam failed equip attempts within 60 seconds
+                if (failedEquipAttempts.TryGetValue(item.BagSlotId, out float lastAttempt) && now - lastAttempt < 60.0f)
+                    continue;
+
                 var data = item.ItemData;
                 if (data.ItemClass != ItemClass.Equipment && data.ItemClass != ItemClass.Weapon)
+                    continue;
+
+                // Validate job equip requirements
+                if (!CanJobEquip(player.ClassId, data))
                     continue;
 
                 // Explicit blacklist: Never auto-equip the basic starter Knife into empty weapon slots
@@ -102,12 +133,12 @@ namespace RebuildBotPlugin.Controllers
                     slotName = "Armor";
                     bodyEmpty = false;
                 }
-                else if (weaponEmpty && (pos & EquipPosition.MainHand) != 0)
+                else if (weaponEmpty && data.ItemClass == ItemClass.Weapon && (pos & EquipPosition.MainHand) != 0)
                 {
                     slotName = "Weapon";
                     weaponEmpty = false;
                 }
-                else if (shieldEmpty && (pos & EquipPosition.OffHand) != 0)
+                else if (shieldEmpty && data.ItemClass == ItemClass.Equipment && (pos & EquipPosition.OffHand) != 0 && (pos & EquipPosition.MainHand) == 0)
                 {
                     slotName = "Shield";
                     shieldEmpty = false;
@@ -135,12 +166,154 @@ namespace RebuildBotPlugin.Controllers
 
                 if (slotName != null)
                 {
+                    failedEquipAttempts[item.BagSlotId] = now;
                     netManager.SendEquipItem(item.BagSlotId);
                     equippedBagSlots.Add(item.BagSlotId);
                     BotEngine.Instance?.LogEvent($"[Equipment] Auto-equipped '{data.Name}' into empty {slotName} slot (Bag Slot: {item.BagSlotId}).");
                     return; // Equip one piece per tick to avoid packet flooding
                 }
             }
+        }
+
+        public static bool CanJobEquip(int classId, ItemData data)
+        {
+            if (data == null) return false;
+
+            if (data.ItemClass == ItemClass.Weapon)
+            {
+                int id = data.Id;
+                string name = data.Name ?? "";
+                string code = data.Code ?? "";
+
+                // Determine weapon family
+                // Bows: ID 1701-1749, 18100-18119
+                bool isBow = (id >= 1701 && id <= 1749) || (id >= 18100 && id <= 18119) ||
+                             name.IndexOf("Bow", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             code.IndexOf("Bow", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             name.IndexOf("Crossbow", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             name.IndexOf("Gakkung", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             name.IndexOf("Arbalest", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // Daggers: ID 1201-1249, 13000-13049
+                bool isDagger = (id >= 1201 && id <= 1249) || (id >= 13000 && id <= 13049) ||
+                                name.IndexOf("Dagger", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Knife", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Cutter", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Gauche", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Stiletto", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Gladius", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Damascus", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // 2H Swords: ID 1151-1199 or 1116, 1117 (Katana)
+                bool is2HSword = (id >= 1151 && id <= 1199) || id == 1116 || id == 1117 ||
+                                 name.IndexOf("Katana", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Two-Handed", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Claymore", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Bastard", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Slayer", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // 1H Swords: ID 1101-1149, 13400-13419 (excluding Katana)
+                bool is1HSword = !is2HSword && ((id >= 1101 && id <= 1149) || (id >= 13400 && id <= 13419) ||
+                                 name.IndexOf("Sword", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Falchion", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Blade", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Rapier", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Scimiter", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Tsurugi", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Saber", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Haedonggum", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Flamberge", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                // Spears: ID 1401-1499
+                bool isSpear = (id >= 1401 && id <= 1499) || name.IndexOf("Spear", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               name.IndexOf("Lance", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               name.IndexOf("Pike", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               name.IndexOf("Glaive", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               name.IndexOf("Partizan", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               name.IndexOf("Trident", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               name.IndexOf("Halberd", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // Axes: ID 1301-1399
+                bool isAxe = (id >= 1301 && id <= 1399) || name.IndexOf("Axe", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             name.IndexOf("Tomahawk", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             name.IndexOf("Cleaver", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // Maces: ID 1501-1599
+                bool isMace = (id >= 1501 && id <= 1599) || name.IndexOf("Mace", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                              name.IndexOf("Club", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                              name.IndexOf("Hammer", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                              name.IndexOf("Chain", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                              name.IndexOf("Flail", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                              name.IndexOf("Morning Star", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                              name.IndexOf("Stunner", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                              name.IndexOf("Spike", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // Rods / Staves: ID 1601-1699
+                bool isRod = (id >= 1601 && id <= 1699) || name.IndexOf("Rod", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             name.IndexOf("Staff", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             name.IndexOf("Wand", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             name.IndexOf("Arc Wand", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // Katars: ID 1250-1299
+                bool isKatar = (id >= 1250 && id <= 1299) || name.IndexOf("Katar", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               name.IndexOf("Jur", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               name.IndexOf("Jamadhar", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // Knuckles: ID 1801-1849
+                bool isKnuckle = (id >= 1801 && id <= 1849) || name.IndexOf("Knuckle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Claw", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Finger", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 name.IndexOf("Fist", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                // Instruments / Whips: ID 1901-1999
+                bool isInstrument = (id >= 1901 && id <= 1949) || name.IndexOf("Guitar", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    name.IndexOf("Lute", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    name.IndexOf("Harp", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    name.IndexOf("Violin", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                bool isWhip = (id >= 1951 && id <= 1999) || name.IndexOf("Whip", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                              name.IndexOf("Rope", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                              name.IndexOf("Tail", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                switch (classId)
+                {
+                    case 0: // Novice
+                        return isDagger || is1HSword || isAxe || isMace || isRod;
+                    case 1: // Swordsman
+                    case 7: // Knight
+                    case 13: // Crusader
+                        return isDagger || is1HSword || is2HSword || isSpear || isAxe || isMace;
+                    case 2: // Archer
+                    case 11: // Hunter
+                        return isBow || isDagger;
+                    case 3: // Mage
+                    case 9: // Wizard
+                    case 15: // Sage
+                        return isRod || isDagger;
+                    case 4: // Acolyte
+                    case 8: // Priest
+                        return isMace || isRod;
+                    case 14: // Monk
+                        return isMace || isRod || isKnuckle;
+                    case 5: // Thief
+                    case 16: // Rogue
+                        return isDagger || is1HSword || isBow;
+                    case 12: // Assassin
+                        return isDagger || is1HSword || isKatar;
+                    case 6: // Merchant
+                    case 10: // Blacksmith
+                    case 17: // Alchemist
+                        return isAxe || isMace || is1HSword || isDagger;
+                    case 18: // Bard
+                        return isBow || isInstrument || isDagger;
+                    case 19: // Dancer
+                        return isBow || isWhip || isDagger;
+                    default:
+                        return true;
+                }
+            }
+
+            return true;
         }
 
         /// <summary>

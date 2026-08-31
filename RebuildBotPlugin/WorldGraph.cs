@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
+using Assets.Scripts.MapEditor;
 using UnityEngine;
 
 namespace RebuildBotPlugin
@@ -24,51 +25,84 @@ namespace RebuildBotPlugin
 
         public Vector2Int GetWalkableTriggerTile(Assets.Scripts.MapEditor.RagnarokWalkData walkData, Vector2Int fromPlayerPos)
         {
-            if (walkData == null) return CenterPos;
-
             int w = Math.Max(Width, 1);
             int h = Math.Max(Height, 1);
 
+            ushort playerZone = MapNavMesh.Instance != null ? MapNavMesh.Instance.GetZoneId(fromPlayerPos) : (ushort)0;
+
             Vector2Int bestTile = CenterPos;
             float bestDist = float.MaxValue;
-            bool foundWalkable = false;
+            bool foundWalkableInZone = false;
+            bool foundWalkableAny = false;
 
             // 1. Check all cells inside the warp bounding box
             for (int x = FromPos.x; x < FromPos.x + w; x++)
             {
                 for (int y = FromPos.y; y < FromPos.y + h; y++)
                 {
-                    if (x >= 0 && y >= 0 && x < walkData.Width && y < walkData.Height && walkData.CellWalkable(x, y))
+                    if (x >= 0 && y >= 0 && (walkData == null || (x < walkData.Width && y < walkData.Height && walkData.CellWalkable(x, y))))
                     {
+                        Vector2Int tile = new Vector2Int(x, y);
+                        ushort tileZone = MapNavMesh.Instance != null ? MapNavMesh.Instance.GetZoneId(tile) : (ushort)0;
+                        bool inSameZone = playerZone != 0 && tileZone == playerZone;
+
                         float d = Vector2.Distance(fromPlayerPos, new Vector2(x, y));
-                        if (d < bestDist)
+
+                        if (inSameZone)
+                        {
+                            if (!foundWalkableInZone || d < bestDist)
+                            {
+                                bestDist = d;
+                                bestTile = tile;
+                                foundWalkableInZone = true;
+                            }
+                        }
+                        else if (!foundWalkableInZone && (!foundWalkableAny || d < bestDist))
                         {
                             bestDist = d;
-                            bestTile = new Vector2Int(x, y);
-                            foundWalkable = true;
+                            bestTile = tile;
+                            foundWalkableAny = true;
                         }
                     }
                 }
             }
 
-            if (foundWalkable) return bestTile;
+            if (foundWalkableInZone) return bestTile;
 
-            // 2. If no cells inside the bounding box are marked walkable, check 1-tile perimeter around the box
-            for (int x = FromPos.x - 1; x <= FromPos.x + w; x++)
+            // 2. If no cells inside the bounding box are in player's zone, check 2-tile perimeter around the box
+            for (int r = 1; r <= 2; r++)
             {
-                for (int y = FromPos.y - 1; y <= FromPos.y + h; y++)
+                for (int x = FromPos.x - r; x <= FromPos.x + w + r - 1; x++)
                 {
-                    if (x >= 0 && y >= 0 && x < walkData.Width && y < walkData.Height && walkData.CellWalkable(x, y))
+                    for (int y = FromPos.y - r; y <= FromPos.y + h + r - 1; y++)
                     {
-                        float d = Vector2.Distance(fromPlayerPos, new Vector2(x, y));
-                        if (d < bestDist)
+                        if (x >= 0 && y >= 0 && (walkData == null || (x < walkData.Width && y < walkData.Height && walkData.CellWalkable(x, y))))
                         {
-                            bestDist = d;
-                            bestTile = new Vector2Int(x, y);
-                            foundWalkable = true;
+                            Vector2Int tile = new Vector2Int(x, y);
+                            ushort tileZone = MapNavMesh.Instance != null ? MapNavMesh.Instance.GetZoneId(tile) : (ushort)0;
+                            bool inSameZone = playerZone != 0 && tileZone == playerZone;
+
+                            float d = Vector2.Distance(fromPlayerPos, new Vector2(x, y));
+
+                            if (inSameZone)
+                            {
+                                if (!foundWalkableInZone || d < bestDist)
+                                {
+                                    bestDist = d;
+                                    bestTile = tile;
+                                    foundWalkableInZone = true;
+                                }
+                            }
+                            else if (!foundWalkableInZone && (!foundWalkableAny || d < bestDist))
+                            {
+                                bestDist = d;
+                                bestTile = tile;
+                                foundWalkableAny = true;
+                            }
                         }
                     }
                 }
+                if (foundWalkableInZone) return bestTile;
             }
 
             return bestTile;
@@ -342,7 +376,8 @@ namespace RebuildBotPlugin
             Vector2Int startPos,
             string targetMap,
             Vector2Int? targetPos = null,
-            Func<Vector2Int, Vector2Int, bool> isReachableOnStartMap = null)
+            Func<Vector2Int, Vector2Int, bool> isReachableOnStartMap = null,
+            WarpConnection preferredStartWarp = null)
         {
             if (string.IsNullOrEmpty(startMap) || string.IsNullOrEmpty(targetMap))
                 return null;
@@ -359,16 +394,20 @@ namespace RebuildBotPlugin
                     return new List<WarpConnection>();
             }
 
+            var walkProvider = RoWalkDataProvider.Instance;
+            var walkData = walkProvider != null ? walkProvider.WalkData : null;
+
             // 2. Determine initial reachable warps leaving startMap from the current zone
             if (!MapNodes.TryGetValue(startMap, out var startMapWarps) || startMapWarps.Count == 0)
                 return null;
 
-            var reachableStartWarps = new List<WarpConnection>();
+            var reachableStartWarps = new List<(WarpConnection warp, Vector2Int triggerTile)>();
             foreach (var w in startMapWarps)
             {
-                if (isReachableOnStartMap == null || isReachableOnStartMap(startPos, w.CenterPos))
+                Vector2Int triggerTile = w.GetWalkableTriggerTile(walkData, startPos);
+                if (isReachableOnStartMap == null || isReachableOnStartMap(startPos, triggerTile))
                 {
-                    reachableStartWarps.Add(w);
+                    reachableStartWarps.Add((w, triggerTile));
                 }
             }
 
@@ -384,10 +423,30 @@ namespace RebuildBotPlugin
             var pq = new List<(WarpConnection warp, float dist)>();
 
             // Seed initial warps leaving startMap from current zone
-            foreach (var warp in reachableStartWarps)
+            foreach (var item in reachableStartWarps)
             {
-                float walkFromStart = Vector2.Distance(startPos, warp.CenterPos);
-                float edgeCost = (warp.IsKafraTeleport ? 0.2f : 1.0f) + (walkFromStart * 0.0005f);
+                var warp = item.warp;
+                Vector2Int triggerTile = item.triggerTile;
+                float walkFromStart = Vector2.Distance(startPos, triggerTile);
+
+                // For start map warps when choosing among multiple candidates, use true A* path distance if available
+                if (reachableStartWarps.Count > 1 && !warp.IsKafraTeleport)
+                {
+                    var truePath = MapNavMesh.Instance.FindPath(startPos, triggerTile);
+                    if (truePath != null && truePath.Count > 0)
+                    {
+                        walkFromStart = truePath.Count;
+                    }
+                }
+
+                float edgeCost = (warp.IsKafraTeleport ? 0.2f : 1.0f) + (walkFromStart * 0.002f);
+
+                // Apply hysteresis commitment bonus to currently pursued warp on the start map
+                if (preferredStartWarp != null && warp == preferredStartWarp)
+                {
+                    edgeCost -= 0.30f;
+                }
+
                 distances[warp] = edgeCost;
                 parentWarp[warp] = null;
                 pq.Add((warp, edgeCost));
@@ -435,7 +494,7 @@ namespace RebuildBotPlugin
                     }
 
                     float finalWalkDist = targetPos.HasValue ? Vector2.Distance(current.warp.DestPos, targetPos.Value) : 0f;
-                    float goalCost = current.dist + (finalWalkDist * 0.005f);
+                    float goalCost = current.dist + (finalWalkDist * 0.002f);
 
                     if (goalCost < bestGoalCost)
                     {
@@ -443,11 +502,8 @@ namespace RebuildBotPlugin
                         bestEndWarp = current.warp;
                     }
 
-                    // If no specific targetPos requested or distance is negligible, we found the optimal route
-                    if (!targetPos.HasValue || finalWalkDist <= 5f)
-                    {
-                        break;
-                    }
+                    // Do not expand warps leaving targetMap
+                    continue;
                 }
 
             EXPAND:
@@ -456,15 +512,17 @@ namespace RebuildBotPlugin
                 {
                     foreach (var nextWarp in nextWarps)
                     {
+                        Vector2Int nextTrigger = nextWarp.GetWalkableTriggerTile(walkData, current.warp.DestPos);
+
                         // If traversing back across startMap, verify startMap zone reachability
                         if (string.Equals(current.warp.DestMap, startMap, StringComparison.OrdinalIgnoreCase) && isReachableOnStartMap != null)
                         {
-                            if (!isReachableOnStartMap(current.warp.DestPos, nextWarp.CenterPos))
+                            if (!isReachableOnStartMap(current.warp.DestPos, nextTrigger))
                                 continue;
                         }
 
-                        float walkBetween = Vector2.Distance(current.warp.DestPos, nextWarp.CenterPos);
-                        float edgeCost = (nextWarp.IsKafraTeleport ? 0.2f : 1.0f) + (walkBetween * 0.0005f);
+                        float walkBetween = Vector2.Distance(current.warp.DestPos, nextTrigger);
+                        float edgeCost = (nextWarp.IsKafraTeleport ? 0.2f : 1.0f) + (walkBetween * 0.002f);
                         float newDist = current.dist + edgeCost;
 
                         if (newDist < bestGoalCost && (!distances.TryGetValue(nextWarp, out float oldDist) || newDist < oldDist))

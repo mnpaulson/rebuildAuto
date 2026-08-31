@@ -262,7 +262,7 @@ namespace RebuildBotPlugin
             }
 
             // Adjust window height dynamically based on expanded sections with comfortable padding
-            float targetHeight = 345 + (showQuickToggles ? 128 : 0) + (showHeatmapMonitor ? 205 : 0) + (showConfigHelpers ? 305 : 0);
+            float targetHeight = 345 + (showQuickToggles ? 175 : 0) + (showHeatmapMonitor ? 205 : 0) + (showConfigHelpers ? 305 : 0);
             windowRect.height = targetHeight;
 
             // Draw main window background box
@@ -309,48 +309,57 @@ namespace RebuildBotPlugin
             {
                 cursor.Space(3);
                 var cfg = BotConfigManager.Current;
-                float togW = (contentW - 16) / 5f;
+                float togW = (contentW - 8) / 3f;
 
-                // Row 1 of quick toggles
+                // Row 1: Core Combat
                 Rect rToggles1 = cursor.Next(24);
                 ConfigToggle(new Rect(rToggles1.x, rToggles1.y, togW, 24), "Attack", () => cfg.AutoAttack, v => cfg.AutoAttack = v);
                 ConfigToggle(new Rect(rToggles1.x + togW + 4, rToggles1.y, togW, 24), "Loot", () => cfg.AutoLoot, v => cfg.AutoLoot = v);
                 ConfigToggle(new Rect(rToggles1.x + (togW + 4) * 2, rToggles1.y, togW, 24), "Wander", () => cfg.AutoWander, v => cfg.AutoWander = v);
-                ConfigToggle(new Rect(rToggles1.x + (togW + 4) * 3, rToggles1.y, togW, 24), "Potion", () => cfg.AutoPotion, v => cfg.AutoPotion = v);
-                ConfigToggle(new Rect(rToggles1.x + (togW + 4) * 4, rToggles1.y, togW, 24), "Aggro 1st", () => cfg.PrioritizeAggressiveMonsters, v => cfg.PrioritizeAggressiveMonsters = v);
 
                 cursor.Space(3);
 
-                // Row 2 of quick toggles
+                // Row 2: Targeting & Survival
                 Rect rToggles2 = cursor.Next(24);
-                ConfigToggle(new Rect(rToggles2.x, rToggles2.y, togW, 24), "Respawn", () => cfg.AutoRespawn, v => cfg.AutoRespawn = v);
-                ConfigToggle(new Rect(rToggles2.x + togW + 4, rToggles2.y, togW, 24), "Travel", () => cfg.AutoTravel, v => cfg.AutoTravel = v);
+                ConfigToggle(new Rect(rToggles2.x, rToggles2.y, togW, 24), "Potion", () => cfg.AutoPotion, v => cfg.AutoPotion = v);
+                ConfigToggle(new Rect(rToggles2.x + togW + 4, rToggles2.y, togW, 24), "Aggro 1st", () => cfg.PrioritizeAggressiveMonsters, v => cfg.PrioritizeAggressiveMonsters = v);
                 ConfigToggle(new Rect(rToggles2.x + (togW + 4) * 2, rToggles2.y, togW, 24), "Avoid", () => cfg.AutoAvoidMonsters, v => cfg.AutoAvoidMonsters = v);
-                ConfigToggle(new Rect(rToggles2.x + (togW + 4) * 3, rToggles2.y, togW, 24), "HP Wing", () => cfg.EmergencyFlyWingOnLowHp, v => cfg.EmergencyFlyWingOnLowHp = v);
-                ConfigToggle(new Rect(rToggles2.x + (togW + 4) * 4, rToggles2.y, togW, 24), "Auto-Sit", () => cfg.AutoSitToRecover, v => cfg.AutoSitToRecover = v);
 
                 cursor.Space(3);
 
-                // Row 3 of quick toggles (Progression, Town, & Reconnect)
+                // Row 3: Travel & Escape
                 Rect rToggles3 = cursor.Next(24);
-                float togW3 = (contentW - 12) / 4f;
-                ConfigToggle(new Rect(rToggles3.x, rToggles3.y, togW3, 24), "Auto-Stats", () => cfg.AutoStatAllocation, v => cfg.AutoStatAllocation = v);
-                ConfigToggle(new Rect(rToggles3.x + togW3 + 4, rToggles3.y, togW3, 24), "Auto-Skills", () => cfg.AutoSkillAllocation, v => cfg.AutoSkillAllocation = v);
-                ConfigToggle(new Rect(rToggles3.x + (togW3 + 4) * 2, rToggles3.y, togW3, 24), "No-HP Town", () => cfg.AutoReturnOnOutOfHpItems, v => cfg.AutoReturnOnOutOfHpItems = v);
-                ConfigToggle(new Rect(rToggles3.x + (togW3 + 4) * 3, rToggles3.y, togW3, 24), "Reconnect", () => cfg.AutoReconnect, v => cfg.AutoReconnect = v);
+                ConfigToggle(new Rect(rToggles3.x, rToggles3.y, togW, 24), "Travel", () => cfg.AutoTravel, v => cfg.AutoTravel = v);
+                ConfigToggle(new Rect(rToggles3.x + togW + 4, rToggles3.y, togW, 24), "Respawn", () => cfg.AutoRespawn, v => cfg.AutoRespawn = v);
+                ConfigToggle(new Rect(rToggles3.x + (togW + 4) * 2, rToggles3.y, togW, 24), "HP Wing", () => cfg.EmergencyFlyWingOnLowHp, v => cfg.EmergencyFlyWingOnLowHp = v);
 
                 cursor.Space(3);
 
-                // Row 4 of quick toggles (Low-Spec, Job Change, & Auto-Equip)
+                // Row 4: Recovery & Restock
                 Rect rToggles4 = cursor.Next(24);
-                float togW4 = (contentW - 8) / 3f;
+                ConfigToggle(new Rect(rToggles4.x, rToggles4.y, togW, 24), "Auto-Sit", () => cfg.AutoSitToRecover, v => cfg.AutoSitToRecover = v);
+                ConfigToggle(new Rect(rToggles4.x + togW + 4, rToggles4.y, togW, 24), "No-HP Town", () => cfg.AutoReturnOnOutOfHpItems, v => cfg.AutoReturnOnOutOfHpItems = v);
+                ConfigToggle(new Rect(rToggles4.x + (togW + 4) * 2, rToggles4.y, togW, 24), "Auto-Equip", () => cfg.AutoEquipEmptySlots, v => cfg.AutoEquipEmptySlots = v);
+
+                cursor.Space(3);
+
+                // Row 5: Progression & Automation
+                Rect rToggles5 = cursor.Next(24);
+                ConfigToggle(new Rect(rToggles5.x, rToggles5.y, togW, 24), "Auto-Stats", () => cfg.AutoStatAllocation, v => cfg.AutoStatAllocation = v);
+                ConfigToggle(new Rect(rToggles5.x + togW + 4, rToggles5.y, togW, 24), "Auto-Skills", () => cfg.AutoSkillAllocation, v => cfg.AutoSkillAllocation = v);
+                ConfigToggle(new Rect(rToggles5.x + (togW + 4) * 2, rToggles5.y, togW, 24), "Auto-Job", () => cfg.AutoJobChange, v => cfg.AutoJobChange = v);
+
+                cursor.Space(3);
+
+                // Row 6: System & Utility
+                Rect rToggles6 = cursor.Next(24);
                 bool curLowSpec = cfg.LowSpecMode;
-                if (ConfigToggle(new Rect(rToggles4.x, rToggles4.y, togW4, 24), $"Low-Spec (F8)", () => cfg.LowSpecMode, v => { cfg.LowSpecMode = v; BotEngine.Instance?.LowSpec.ApplyState(v); }) != curLowSpec)
+                if (ConfigToggle(new Rect(rToggles6.x, rToggles6.y, togW, 24), $"Low-Spec (F8)", () => cfg.LowSpecMode, v => { cfg.LowSpecMode = v; BotEngine.Instance?.LowSpec.ApplyState(v); }) != curLowSpec)
                 {
                     BotConfigManager.SaveConfig();
                 }
-                ConfigToggle(new Rect(rToggles4.x + togW4 + 4, rToggles4.y, togW4, 24), $"Auto-Job", () => cfg.AutoJobChange, v => cfg.AutoJobChange = v);
-                ConfigToggle(new Rect(rToggles4.x + (togW4 + 4) * 2, rToggles4.y, togW4, 24), $"Auto-Equip", () => cfg.AutoEquipEmptySlots, v => cfg.AutoEquipEmptySlots = v);
+                ConfigToggle(new Rect(rToggles6.x + togW + 4, rToggles6.y, togW, 24), "Reconnect", () => cfg.AutoReconnect, v => cfg.AutoReconnect = v);
+                ConfigToggle(new Rect(rToggles6.x + (togW + 4) * 2, rToggles6.y, togW, 24), "Auto-Aspd", () => cfg.AutoAspdPotion, v => cfg.AutoAspdPotion = v);
             }
 
             cursor.Space(5);

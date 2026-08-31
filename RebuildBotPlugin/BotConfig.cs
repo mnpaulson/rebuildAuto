@@ -35,6 +35,8 @@ namespace RebuildBotPlugin
         public bool AutoReturnOnOutOfHpItems { get; set; } = true;
         public bool AutoRestock { get; set; } = true;
         public bool AutoRestockOnLowSupplies { get; set; } = true;
+        public bool AutoEquipBestArrow { get; set; } = true;
+        public int MinArrowCount { get; set; } = 30;
         public Dictionary<string, int> RestockTargets { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
             ["Fly_Wing"] = 100,

@@ -190,7 +190,8 @@ namespace RebuildBotPlugin.Controllers
                 for (int i = 0; i < options.Length; i++)
                 {
                     string text = options[i]?.TextBox != null ? options[i].TextBox.text : "";
-                    if (text.IndexOf("Cancel", StringComparison.OrdinalIgnoreCase) >= 0)
+                    if (text.IndexOf("Cancel", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        text.IndexOf("changed my mind", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         BotEngine.Instance?.LogEvent($"[Adventuring Bard] Starter gift claimed (Zeny: {state.Zeny})! Selecting Cancel to resume hunting.");
                         options[i].OnClick();
@@ -201,7 +202,20 @@ namespace RebuildBotPlugin.Controllers
                 }
             }
 
-            // 1. Check for Main Menu: contains "Job change"
+            // 1. Check for Confirmation Menu FIRST: contains "I'm sure"
+            for (int i = 0; i < options.Length; i++)
+            {
+                string text = options[i]?.TextBox != null ? options[i].TextBox.text : "";
+                if (text.IndexOf("I'm sure", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    (text.IndexOf("sure", StringComparison.OrdinalIgnoreCase) >= 0 && text.IndexOf("changed", StringComparison.OrdinalIgnoreCase) < 0))
+                {
+                    BotEngine.Instance?.LogEvent($"[Job Change] Confirming Job Choice option [{i}]: '{text}'");
+                    options[i].OnClick();
+                    return true;
+                }
+            }
+
+            // 2. Check for Main Menu: contains "Job change"
             for (int i = 0; i < options.Length; i++)
             {
                 string text = options[i]?.TextBox != null ? options[i].TextBox.text : "";
@@ -213,29 +227,16 @@ namespace RebuildBotPlugin.Controllers
                 }
             }
 
-            // 2. Check for Job Selection Menu: contains "Swordsman", "Archer", etc.
+            // 3. Check for Job Selection Menu: contains "Swordsman", "Archer", etc.
             string targetJob = (BotConfigManager.Current.TargetJob ?? "Swordman").Trim();
             int desiredJobIndex = ResolveJobOptionIndex(targetJob);
 
             for (int i = 0; i < options.Length; i++)
             {
                 string text = options[i]?.TextBox != null ? options[i].TextBox.text : "";
-                if (IsMatchingJobOption(text, targetJob, desiredJobIndex, i))
+                if (IsMatchingJobOption(text, targetJob, desiredJobIndex))
                 {
                     BotEngine.Instance?.LogEvent($"[Job Change] Selecting Target Job option [{i}]: '{text}'");
-                    options[i].OnClick();
-                    return true;
-                }
-            }
-
-            // 3. Check for Confirmation Menu: contains "I'm sure"
-            for (int i = 0; i < options.Length; i++)
-            {
-                string text = options[i]?.TextBox != null ? options[i].TextBox.text : "";
-                if (text.IndexOf("I'm sure", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    text.IndexOf("sure", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    BotEngine.Instance?.LogEvent($"[Job Change] Confirming Job Choice option [{i}]: '{text}'");
                     options[i].OnClick();
                     return true;
                 }
@@ -259,20 +260,23 @@ namespace RebuildBotPlugin.Controllers
             return 0; // Default to Swordsman
         }
 
-        private bool IsMatchingJobOption(string optionText, string targetJob, int desiredIndex, int currentIndex)
+        private bool IsMatchingJobOption(string optionText, string targetJob, int desiredIndex)
         {
             if (string.IsNullOrWhiteSpace(optionText)) return false;
             string clean = optionText.Trim().ToLowerInvariant();
 
+            // Ignore cancel / dismiss options
+            if (clean.Contains("changed my mind") || clean.Contains("cancel") || clean.Contains("nevermind"))
+                return false;
+
             if (desiredIndex == 0 && (clean.Contains("swordsman") || clean.Contains("swordman"))) return true;
             if (desiredIndex == 1 && clean.Contains("archer")) return true;
-            if (desiredIndex == 2 && clean.Contains("mage")) return true;
+            if (desiredIndex == 2 && (clean.Contains("mage") || clean.Contains("magician"))) return true;
             if (desiredIndex == 3 && clean.Contains("acolyte")) return true;
             if (desiredIndex == 4 && clean.Contains("thief")) return true;
             if (desiredIndex == 5 && clean.Contains("merchant")) return true;
 
-            // Direct index match fallback
-            return currentIndex == desiredIndex;
+            return false;
         }
     }
 }

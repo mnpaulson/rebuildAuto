@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Assets.Scripts;
 using Assets.Scripts.MapEditor;
 using Assets.Scripts.Network;
+using Assets.Scripts.PlayerControl;
 using RebuildBotPlugin.Services;
 using RebuildSharedData.Enum;
 using UnityEngine;
@@ -95,10 +96,10 @@ namespace RebuildBotPlugin.Controllers
             if (validAttackers == null || validAttackers.Count == 0) return null;
 
             // Sort attackers:
-            // 1. Group by proximity (in melee range <= AttackRange + 1.5f vs farther away)
+            // 1. Group by proximity (in melee/attack range <= AttackRange + 1.5f vs farther away)
             // 2. Lowest HP first (kill easiest / lowest HP attackers first!)
             // 3. Closest distance
-            float meleeZone = BotConfigManager.Current.AttackRange + 1.5f;
+            float meleeZone = CombatController.GetEffectiveAttackRange() + 1.5f;
             validAttackers.Sort((a, b) =>
             {
                 bool aInMelee = a.dist <= meleeZone;
@@ -143,7 +144,7 @@ namespace RebuildBotPlugin.Controllers
             if (netManager == null || netManager.EntityList == null) return null;
 
             float now = Time.time;
-            List<(ServerControllable monster, float dist, int priority)> candidates = null;
+            List<(ServerControllable monster, float dist, int priority, bool hasLos)> candidates = null;
 
             foreach (var kvp in netManager.EntityList)
             {
@@ -197,8 +198,10 @@ namespace RebuildBotPlugin.Controllers
                             priority = 1;
                         }
 
-                        candidates ??= new List<(ServerControllable, float, int)>();
-                        candidates.Add((entity, dist, priority));
+                        bool hasLos = Pathfinder.HasLineOfSight(playerPos, entity.CellPosition);
+
+                        candidates ??= new List<(ServerControllable, float, int, bool)>();
+                        candidates.Add((entity, dist, priority, hasLos));
                     }
                 }
             }
@@ -208,47 +211,57 @@ namespace RebuildBotPlugin.Controllers
             // Sort:
             // 1. Highest priority tier first (Tier 0 < Tier 1 < Tier 2)
             // 2. Within Tier 0 (Active attackers hitting player): lowest HP first (kill fastest), then closest
-            // 3. Within Tier 1 (Aggressive threats <= 8.5 tiles) and Tier 2 (General targets):
-            //    CLOSEST DISTANCE FIRST! Never run across the screen leaving nearby targets behind!
-            //    Only if distance difference is negligible (<= 1.5 tiles), break tie with lowest HP
+            // 3. Within Tier 1 & 2: Prefer monsters with clear Line of Sight when distance is comparable
+            // 4. Closest distance first!
+            // 5. Tie breaker: Lowest HP
             candidates.Sort((a, b) =>
             {
-                int pComp = a.Item3.CompareTo(b.Item3);
+                int pComp = a.priority.CompareTo(b.priority);
                 if (pComp != 0) return pComp;
 
-                if (a.Item3 == 0)
+                if (a.priority == 0)
                 {
-                    int hpComp = a.Item1.Hp.CompareTo(b.Item1.Hp);
+                    int hpComp = a.monster.Hp.CompareTo(b.monster.Hp);
                     if (hpComp != 0) return hpComp;
-                    return a.Item2.CompareTo(b.Item2);
+                    return a.dist.CompareTo(b.dist);
                 }
 
-                // Tier 1 & 2: Distance is primary
-                float distDiff = a.Item2 - b.Item2;
+                // Tier 1 & 2: Line of Sight preference
+                if (a.hasLos != b.hasLos)
+                {
+                    float losDistDiff = a.dist - b.dist;
+                    // If target A has clear LOS and is within 5 tiles of target B, prefer target A with clear LOS
+                    if (a.hasLos && losDistDiff < 5.0f) return -1;
+                    if (b.hasLos && -losDistDiff < 5.0f) return 1;
+                }
+
+                // Distance is primary
+                float distDiff = a.dist - b.dist;
                 if (Mathf.Abs(distDiff) > 1.5f)
                 {
                     return distDiff < 0 ? -1 : 1;
                 }
 
-                int hpTieBreaker = a.Item1.Hp.CompareTo(b.Item1.Hp);
+                int hpTieBreaker = a.monster.Hp.CompareTo(b.monster.Hp);
                 if (hpTieBreaker != 0) return hpTieBreaker;
 
-                return a.Item2.CompareTo(b.Item2);
+                return a.dist.CompareTo(b.dist);
             });
 
             // Select first reachable candidate
             foreach (var item in candidates)
             {
-                if (IsMonsterPathable(playerPos, item.Item1.CellPosition))
+                if (IsMonsterPathable(playerPos, item.monster.CellPosition))
                 {
-                    string tierName = item.Item3 == 0 ? "Active Attacker" : item.Item3 == 1 ? "Aggressive Threat" : "Standard Target";
-                    BotEngine.Instance?.LogEvent($"[Targeting] Selected {item.Item1.Name} (ID: {item.Item1.Id}, dist: {item.Item2:F1} tiles, HP: {item.Item1.Hp}/{item.Item1.MaxHp}) [{tierName}].");
-                    return item.Item1;
+                    string tierName = item.priority == 0 ? "Active Attacker" : item.priority == 1 ? "Aggressive Threat" : "Standard Target";
+                    string losTag = item.hasLos ? "LOS: Clear" : "LOS: Blocked";
+                    BotEngine.Instance?.LogEvent($"[Targeting] Selected {item.monster.Name} (ID: {item.monster.Id}, dist: {item.dist:F1} tiles, HP: {item.monster.Hp}/{item.monster.MaxHp}) [{tierName}, {losTag}].");
+                    return item.monster;
                 }
                 else
                 {
-                    MarkUnreachable(item.Item1.Id, 6.0f);
-                    BotEngine.Instance?.LogEvent($"[Targeting] Candidate {item.Item1.Name} (ID: {item.Item1.Id}) at ({item.Item1.CellPosition.x}, {item.Item1.CellPosition.y}) path blocked by terrain. Blacklisting for 6s.");
+                    MarkUnreachable(item.monster.Id, 6.0f);
+                    BotEngine.Instance?.LogEvent($"[Targeting] Candidate {item.monster.Name} (ID: {item.monster.Id}) at ({item.monster.CellPosition.x}, {item.monster.CellPosition.y}) path blocked by terrain. Blacklisting for 6s.");
                 }
             }
 
@@ -347,9 +360,9 @@ namespace RebuildBotPlugin.Controllers
 
             var walkData = walkProvider.WalkData;
 
-            // Find best walkable attack tile 1-2 tiles from monster
+            // Find best walkable attack tile within weapon attack range
             Vector2Int attackPos = BotEngine.Instance != null && BotEngine.Instance.Navigation != null
-                ? BotEngine.Instance.Navigation.GetAttackPosition(currentPos, monsterPos, BotConfigManager.Current.AttackRange)
+                ? BotEngine.Instance.Navigation.GetAttackPosition(currentPos, monsterPos, CombatController.GetEffectiveAttackRange())
                 : monsterPos;
 
             if (attackPos == Vector2Int.zero)

@@ -72,7 +72,7 @@ namespace RebuildBotPlugin.Models
             if (string.IsNullOrWhiteSpace(Skill)) return false;
 
             string s = Skill.Trim();
-            string clean = s.Replace(" ", "").Replace("_", "").Replace("-", "");
+            string clean = s.Replace(" ", "").Replace("_", "").Replace("-", "").Replace("'", "");
 
             // Common aliases
             if (clean.Equals("BasicSkill", StringComparison.OrdinalIgnoreCase) ||
@@ -87,6 +87,20 @@ namespace RebuildBotPlugin.Models
                 clean.Equals("IncreaseAgility", StringComparison.OrdinalIgnoreCase))
             {
                 skill = CharacterSkill.IncreaseAgility;
+                return true;
+            }
+
+            if (clean.Equals("OwlsEye", StringComparison.OrdinalIgnoreCase) ||
+                clean.Equals("OwlEye", StringComparison.OrdinalIgnoreCase))
+            {
+                skill = CharacterSkill.OwlEye;
+                return true;
+            }
+
+            if (clean.Equals("VulturesEye", StringComparison.OrdinalIgnoreCase) ||
+                clean.Equals("VultureEye", StringComparison.OrdinalIgnoreCase))
+            {
+                skill = CharacterSkill.VultureEye;
                 return true;
             }
 

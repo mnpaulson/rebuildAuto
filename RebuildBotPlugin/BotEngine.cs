@@ -306,8 +306,8 @@ namespace RebuildBotPlugin
                 Combat.OnTargetDefeated();
             }
 
-            // PRIORITY 3.4: ACTIVE NPC DIALOG WATCHER (Automatically pace & advance any open dialogs)
-            if (NpcInteractionHelper.ProcessActiveDialog(netManager, now))
+            // PRIORITY 3.4: ACTIVE NPC DIALOG WATCHER (Automatically pace & advance any open dialogs when not in Kafra travel)
+            if (!Navigation.IsKafraTravelActive && NpcInteractionHelper.ProcessActiveDialog(netManager, now))
             {
                 return;
             }

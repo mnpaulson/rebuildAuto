@@ -37,8 +37,9 @@ namespace RebuildBotPlugin.Services
         private int clickedNpcId = -1;
         private string lastSeenDialogText = "";
 
-        public const float MaxNpcVisualRange = 22.0f;
-        public const float NpcLocationAnchorRadius = 10.0f;
+        public const float MaxNpcVisualRange = 24.0f;
+        public const float MinNpcInteractionDistance = 16.0f;
+        public const float NpcLocationAnchorRadius = 20.0f;
         private const float DialogAdvanceDelay = 0.7f;
         private const float OptionSelectDelay = 0.5f;
         private const float StallTimeoutSeconds = 10.0f;

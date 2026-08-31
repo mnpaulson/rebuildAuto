@@ -27,25 +27,49 @@ namespace RebuildBotPlugin.Controllers
         private float lastKafraInteractionTime = 0f;
         private int kafraTravelPhase = 0;
 
+        // Cached Active Travel Plan (Zero per-frame allocations & zero A* thrashing)
+        private string cachedTravelStartMap = null;
+        private string cachedTravelDestMap = null;
+        private Vector2Int? cachedTravelTargetPos = null;
+        private System.Collections.Generic.List<WarpConnection> cachedTravelRoute = null;
+        private WarpConnection activeTravelWarp = null;
+        private Vector2Int activeTravelWarpTarget = Vector2Int.zero;
+        private System.Collections.Generic.List<Vector2Int> activeTravelWaypoints = null;
+        private int activeTravelWaypointIdx = 0;
+
         private readonly Vector2Int[] tempPath = new Vector2Int[32];
 
         public Vector2Int CurrentExplorationWaypoint => currentExplorationWaypoint;
         public float WaypointAssignedTime => waypointAssignedTime;
         public Vector2 LastWanderHeading => lastWanderHeading;
+        public bool IsKafraTravelActive => kafraTravelPhase > 0;
+
+        public void InvalidateTravelPlan()
+        {
+            cachedTravelStartMap = null;
+            cachedTravelDestMap = null;
+            cachedTravelTargetPos = null;
+            cachedTravelRoute = null;
+            activeTravelWarp = null;
+            activeTravelWarpTarget = Vector2Int.zero;
+            activeTravelWaypoints = null;
+            activeTravelWaypointIdx = 0;
+            currentTravelStepTarget = Vector2Int.zero;
+            kafraTravelPhase = 0;
+        }
 
         public void ResetWander()
         {
             currentExplorationWaypoint = Vector2Int.zero;
             currentStepTarget = Vector2Int.zero;
-            currentTravelStepTarget = Vector2Int.zero;
             waypointAssignedTime = 0f;
             stuckTimer = 0f;
-            kafraTravelPhase = 0;
+            InvalidateTravelPlan();
             Services.NpcInteractionHelper.CleanupNpcUi();
         }
 
         /// <summary>
-        /// Finds the optimal walkable attack tile within attackRange (ideally 1.5 - 2.0 tiles away)
+        /// Finds the optimal walkable attack tile within attackRange
         /// on the side of the monster facing the player, with natural human angle variance.
         /// </summary>
         public Vector2Int GetAttackPosition(Vector2Int playerPos, Vector2Int monsterPos, float attackRange = 2.0f)
@@ -56,17 +80,29 @@ namespace RebuildBotPlugin.Controllers
 
             ushort playerZone = MapNavMesh.Instance.GetZoneId(playerPos);
 
-            var candidates = new System.Collections.Generic.List<(Vector2Int tile, float distToPlayer)>();
-
-            // Check ring around monster: distances 1 and 2 tiles
-            for (int dx = -2; dx <= 2; dx++)
+            // If already in attack range, have clear Line of Sight, and standing on a valid walkable tile in the same zone, stay put
+            float currentDist = Vector2.Distance(playerPos, monsterPos);
+            bool playerHasLos = Pathfinder.HasLineOfSight(playerPos, monsterPos);
+            if (currentDist <= attackRange && playerHasLos && walkData.CellWalkable(playerPos.x, playerPos.y) &&
+                (playerZone == 0 || MapNavMesh.Instance.GetZoneId(playerPos) == playerZone))
             {
-                for (int dy = -2; dy <= 2; dy++)
+                return playerPos;
+            }
+
+            var candidates = new System.Collections.Generic.List<(Vector2Int tile, float distToPlayer)>();
+            var losBlockedCandidates = new System.Collections.Generic.List<(Vector2Int tile, float distToPlayer)>();
+
+            int maxR = Mathf.Clamp(Mathf.FloorToInt(attackRange), 1, 14);
+
+            // Check ring around monster within attack range
+            for (int dx = -maxR; dx <= maxR; dx++)
+            {
+                for (int dy = -maxR; dy <= maxR; dy++)
                 {
                     if (dx == 0 && dy == 0) continue;
 
                     float distToMonster = Mathf.Sqrt(dx * dx + dy * dy);
-                    if (distToMonster > attackRange + 0.2f) continue;
+                    if (distToMonster > attackRange + 0.1f) continue;
 
                     Vector2Int candidate = new Vector2Int(monsterPos.x + dx, monsterPos.y + dy);
                     if (candidate.x < 0 || candidate.y < 0 || candidate.x >= walkData.Width || candidate.y >= walkData.Height)
@@ -86,8 +122,23 @@ namespace RebuildBotPlugin.Controllers
                     }
 
                     float distToPlayer = Vector2.Distance(playerPos, candidate);
-                    candidates.Add((candidate, distToPlayer));
+
+                    // Ensure this candidate tile has unblocked Line of Sight to the monster
+                    if (Pathfinder.HasLineOfSight(candidate, monsterPos))
+                    {
+                        candidates.Add((candidate, distToPlayer));
+                    }
+                    else
+                    {
+                        losBlockedCandidates.Add((candidate, distToPlayer));
+                    }
                 }
+            }
+
+            if (candidates.Count == 0 && losBlockedCandidates.Count > 0)
+            {
+                // Fallback to closest walkable tile if no direct LOS tile is in the immediate radius
+                candidates = losBlockedCandidates;
             }
 
             if (candidates.Count == 0)
@@ -134,6 +185,12 @@ namespace RebuildBotPlugin.Controllers
         /// </summary>
         public bool NavigateTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals = false, int hopDistance = 10)
         {
+            return NavigateTowards(currentPos, destination, avoidPortals, hopDistance, out _);
+        }
+
+        public bool NavigateTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals, int hopDistance, out Vector2Int dispatchedStep)
+        {
+            dispatchedStep = Vector2Int.zero;
             if (currentPos == destination) return true;
 
             var netManager = NetworkManager.Instance;
@@ -151,7 +208,7 @@ namespace RebuildBotPlugin.Controllers
                     int directSteps = Pathfinder.GetPath(walkData, currentPos, destination, tempPath);
                     if (directSteps > 0)
                     {
-                        return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly: true);
+                        return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly: true, out dispatchedStep);
                     }
                 }
 
@@ -161,16 +218,22 @@ namespace RebuildBotPlugin.Controllers
                 if (routeWaypoints != null && routeWaypoints.Count > 0)
                 {
                     Vector2Int stepTarget = routeWaypoints[0];
-                    return SafeMoveTowards(currentPos, stepTarget, avoidPortals, forwardOnly: false);
+                    return SafeMoveTowards(currentPos, stepTarget, avoidPortals, forwardOnly: false, out dispatchedStep);
                 }
             }
 
             // 3. Fallback to direct safe movement
-            return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly: false);
+            return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly: false, out dispatchedStep);
         }
 
         public bool SafeMoveTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals = false, bool forwardOnly = false)
         {
+            return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly, out _);
+        }
+
+        public bool SafeMoveTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals, bool forwardOnly, out Vector2Int dispatchedStep)
+        {
+            dispatchedStep = Vector2Int.zero;
             var netManager = NetworkManager.Instance;
             if (netManager == null) return false;
 
@@ -242,6 +305,7 @@ namespace RebuildBotPlugin.Controllers
                             if (!portalBlocked)
                             {
                                 netManager.MovePlayer(directTarget);
+                                dispatchedStep = directTarget;
                                 return true;
                             }
                         }
@@ -296,6 +360,7 @@ namespace RebuildBotPlugin.Controllers
                                 if (!portalBlocked)
                                 {
                                     netManager.MovePlayer(candidate);
+                                    dispatchedStep = candidate;
                                     BotEngine.Instance?.LogEvent($"[Move] Step verified to ({candidate.x}, {candidate.y}) [offset: {angleOffset:F0}°, dist: {d}] ({steps} A* steps).");
                                     return true;
                                 }
@@ -315,6 +380,7 @@ namespace RebuildBotPlugin.Controllers
                 Vector2 step = diff.normalized * dist;
                 Vector2Int stepTarget = currentPos + new Vector2Int(Mathf.RoundToInt(step.x), Mathf.RoundToInt(step.y));
                 netManager.MovePlayer(stepTarget);
+                dispatchedStep = stepTarget;
                 return true;
             }
         }
@@ -328,7 +394,7 @@ namespace RebuildBotPlugin.Controllers
 
             if (string.IsNullOrWhiteSpace(destinationMap))
             {
-                kafraTravelPhase = 0;
+                InvalidateTravelPlan();
                 return false;
             }
 
@@ -340,7 +406,7 @@ namespace RebuildBotPlugin.Controllers
             {
                 if (!targetCellPos.HasValue || MapNavMesh.Instance.IsReachable(player.CellPosition, targetCellPos.Value))
                 {
-                    kafraTravelPhase = 0;
+                    InvalidateTravelPlan();
                     return false;
                 }
             }
@@ -350,55 +416,94 @@ namespace RebuildBotPlugin.Controllers
                 return false;
             }
 
-            var route = WorldGraph.Instance.FindZoneAwareRoute(
-                netManager.CurrentMap,
-                player.CellPosition,
-                destinationMap,
-                targetCellPos,
-                (a, b) => MapNavMesh.Instance.IsReachable(a, b));
+            // 1. REPLAN ONLY WHEN NECESSARY (Zero per-frame allocations & zero A* thrashing)
+            bool needsReplan = cachedTravelRoute == null ||
+                               !string.Equals(cachedTravelStartMap, netManager.CurrentMap, StringComparison.OrdinalIgnoreCase) ||
+                               !string.Equals(cachedTravelDestMap, destinationMap, StringComparison.OrdinalIgnoreCase) ||
+                               cachedTravelTargetPos != targetCellPos ||
+                               activeTravelWarp == null;
 
-            if (route == null || route.Count == 0)
+            if (needsReplan)
             {
-                if (route == null)
-                {
-                    // Isolated pocket / disconnected zone with no route out!
-                    // Solution 2: Escape via Fly Wing (or Butterfly Wing in town)
-                    bool inTown = TownRoutineController.IsTownMap(netManager.CurrentMap);
-                    if (!inTown)
-                    {
-                        int wingId = InventoryHelper.FindFirstItemId(601, 12323);
-                        if (wingId > 0 && now - lastTravelTime >= 2.0f)
-                        {
-                            netManager.SendUseItem(wingId);
-                            lastTravelTime = now;
-                            currentState = BotState.Fleeing;
-                            BotEngine.Instance?.LogEvent($"[Navigation] Trapped in isolated zone on '{netManager.CurrentMap}'! Used Fly Wing (ID: {wingId}) to escape pocket.");
-                            return true;
-                        }
-                    }
-                    else
-                    {
-                        int bwingId = InventoryHelper.FindFirstItemId(602, 12324);
-                        if (bwingId > 0 && now - lastTravelTime >= 2.0f)
-                        {
-                            netManager.SendUseItem(bwingId);
-                            lastTravelTime = now;
-                            BotEngine.Instance?.LogEvent($"[Navigation] Trapped in isolated zone in town '{netManager.CurrentMap}'! Used Butterfly Wing to return to save point.");
-                            return true;
-                        }
-                    }
+                var walkProvider = RoWalkDataProvider.Instance;
+                var walkData = walkProvider != null ? walkProvider.WalkData : null;
 
-                    BotEngine.Instance?.LogEvent($"[Travel Warning] No valid warp route found from current zone on '{netManager.CurrentMap}' to '{destinationMap}'.");
+                cachedTravelStartMap = netManager.CurrentMap;
+                cachedTravelDestMap = destinationMap;
+                cachedTravelTargetPos = targetCellPos;
+                kafraTravelPhase = 0;
+
+                // When transitioning to a new map, clear stale activeTravelWarp from previous map
+                if (activeTravelWarp != null && !string.Equals(activeTravelWarp.FromMap, netManager.CurrentMap, StringComparison.OrdinalIgnoreCase))
+                {
+                    activeTravelWarp = null;
                 }
-                return false;
+
+                cachedTravelRoute = WorldGraph.Instance.FindZoneAwareRoute(
+                    netManager.CurrentMap,
+                    player.CellPosition,
+                    destinationMap,
+                    targetCellPos,
+                    (a, b) => MapNavMesh.Instance.IsReachable(a, b),
+                    activeTravelWarp);
+
+                if (cachedTravelRoute == null || cachedTravelRoute.Count == 0)
+                {
+                    InvalidateTravelPlan();
+                    if (cachedTravelRoute == null)
+                    {
+                        // Isolated pocket / disconnected zone with no route out!
+                        bool inTown = TownRoutineController.IsTownMap(netManager.CurrentMap);
+                        if (!inTown)
+                        {
+                            int wingId = InventoryHelper.FindFirstItemId(601, 12323);
+                            if (wingId > 0 && now - lastTravelTime >= 2.0f)
+                            {
+                                netManager.SendUseItem(wingId);
+                                lastTravelTime = now;
+                                currentState = BotState.Fleeing;
+                                BotEngine.Instance?.LogEvent($"[Navigation] Trapped in isolated zone on '{netManager.CurrentMap}'! Used Fly Wing (ID: {wingId}) to escape pocket.");
+                                return true;
+                            }
+                        }
+                        else
+                        {
+                            int bwingId = InventoryHelper.FindFirstItemId(602, 12324);
+                            if (bwingId > 0 && now - lastTravelTime >= 2.0f)
+                            {
+                                netManager.SendUseItem(bwingId);
+                                lastTravelTime = now;
+                                BotEngine.Instance?.LogEvent($"[Navigation] Trapped in isolated zone in town '{netManager.CurrentMap}'! Used Butterfly Wing to return to save point.");
+                                return true;
+                            }
+                        }
+
+                        BotEngine.Instance?.LogEvent($"[Travel Warning] No valid warp route found from current zone on '{netManager.CurrentMap}' to '{destinationMap}'.");
+                    }
+                    return false;
+                }
+
+                activeTravelWarp = cachedTravelRoute[0];
+                if (activeTravelWarp.IsKafraTeleport)
+                {
+                    activeTravelWarpTarget = activeTravelWarp.FromPos;
+                    activeTravelWaypoints = null;
+                    activeTravelWaypointIdx = 0;
+                }
+                else
+                {
+                    activeTravelWarpTarget = activeTravelWarp.GetWalkableTriggerTile(walkData, player.CellPosition);
+                    activeTravelWaypoints = MapNavMesh.Instance.FindRouteWaypoints(player.CellPosition, activeTravelWarpTarget, 11);
+                    activeTravelWaypointIdx = 0;
+                    BotEngine.Instance?.LogEvent($"[Travel] Planned route on '{netManager.CurrentMap}' to warp for '{activeTravelWarp.DestMap}' at ({activeTravelWarpTarget.x}, {activeTravelWarpTarget.y}) (Total: {cachedTravelRoute.Count} hops, {activeTravelWaypoints?.Count ?? 0} waypoints).");
+                }
             }
 
-            var nextHop = route[0];
+            var nextHop = activeTravelWarp;
 
-            // 1. KAFRA TELEPORT HANDLING
+            // 2. KAFRA TELEPORT HANDLING
             if (nextHop.IsKafraTeleport)
             {
-                // Resolve to closest Kafra in current map if multiple exist (e.g. South Morroc vs North Morroc)
                 var connectingWarps = WorldGraph.Instance.GetWarpsConnecting(netManager.CurrentMap, nextHop.DestMap);
                 WarpConnection bestKafra = null;
                 float bestKafraDist = float.MaxValue;
@@ -417,13 +522,12 @@ namespace RebuildBotPlugin.Controllers
                 {
                     nextHop = bestKafra;
                 }
-
                 var kafraNpc = Services.NpcInteractionHelper.FindNearbyNpc(netManager, "Kafra", nextHop.FromPos, player.CellPosition);
+                float distToKafra = Vector2.Distance(player.CellPosition, nextHop.FromPos);
 
-                // If Kafra is not yet visible in entity list, walk towards her
-                if (kafraNpc == null)
+                // Walk towards Kafra until in screen interaction range (between 16 and 24 tiles away) before clicking
+                if (kafraNpc == null || distToKafra > 20.0f)
                 {
-                    float distToKafra = Vector2.Distance(player.CellPosition, nextHop.FromPos);
                     if (!player.IsMoving && now - lastTravelTime >= nextTravelDelay)
                     {
                         currentState = BotState.TravelingToTargetMap;
@@ -435,11 +539,10 @@ namespace RebuildBotPlugin.Controllers
                     return true;
                 }
 
-                // In visual range! Interacting with Kafra NPC
+                // In interaction range (16 - 20 tiles away)!
                 currentState = BotState.TravelingToTargetMap;
                 if (kafraTravelPhase == 0)
                 {
-                    // If town routine just finished, wait 1.0s for server to finish closing previous interaction
                     if (BotEngine.Instance != null && BotEngine.Instance.TownRoutine != null && (now - BotEngine.Instance.TownRoutine.LastCompletedTime < 1.0f))
                     {
                         return true;
@@ -454,7 +557,8 @@ namespace RebuildBotPlugin.Controllers
                     netManager.SendNpcClick(kafraNpc.Id);
                     kafraTravelPhase = 1;
                     lastKafraInteractionTime = now;
-                    BotEngine.Instance?.LogEvent($"[Travel] Spotted & clicked Kafra '{kafraNpc.Name}' from {Vector2.Distance(player.CellPosition, kafraNpc.CellPosition):F1} tiles away (ID: {kafraNpc.Id}). Requesting teleport to '{nextHop.DestMap}'.");
+                    BotEngine.Instance?.LogEvent($"[Travel] Clicked Kafra '{kafraNpc.Name}' from {distToKafra:F1} tiles away (ID: {kafraNpc.Id}). Requesting teleport to '{nextHop.DestMap}'.");
+                    return true;
                 }
                 else
                 {
@@ -462,11 +566,9 @@ namespace RebuildBotPlugin.Controllers
                     bool dialogOpen = cam != null && cam.DialogPanel != null && cam.DialogPanel.activeSelf;
                     bool optionOpen = cam != null && cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf;
 
-                    // 1. If an option menu is open, handle the menu selection FIRST!
                     if (optionOpen)
                     {
-                        // Human reading delay before clicking options
-                        if (now - lastKafraInteractionTime < BotConstants.HumanReadDelay) return true;
+                        if (now - lastKafraInteractionTime < 0.4f) return true;
 
                         var buttons = cam.NpcOptionPanel.GetComponentsInChildren<NpcOptionButton>(false);
                         if (buttons != null && buttons.Length > 0)
@@ -488,27 +590,24 @@ namespace RebuildBotPlugin.Controllers
                                 }
                             }
 
-                            // If Main Menu is on screen (phase 1), click Teleport Service!
                             if (kafraTravelPhase == 1 && teleportBtn != null)
                             {
                                 teleportBtn.OnClick();
-                                kafraTravelPhase = 2; // Advanced to destination phase
-                                lastKafraInteractionTime = now + UnityEngine.Random.Range(0.7f, 1.1f);
+                                kafraTravelPhase = 2;
+                                lastKafraInteractionTime = now;
                                 BotEngine.Instance?.LogEvent($"[Travel] Selected 'Teleport Service' (ID: {teleportBtn.Id}).");
                                 return true;
                             }
 
-                            // If Destination Menu is on screen (phase 2):
                             if (kafraTravelPhase == 2 && destBtn != null)
                             {
                                 destBtn.OnClick();
-                                kafraTravelPhase = 3; // Teleport issued!
-                                lastKafraInteractionTime = now + 2.5f;
+                                kafraTravelPhase = 3;
+                                lastKafraInteractionTime = now;
                                 BotEngine.Instance?.LogEvent($"[Travel] Clicked destination '{destBtn.TextBox?.text}' (ID: {destBtn.Id}) for '{nextHop.DestMap}'. Teleporting!");
                                 return true;
                             }
 
-                            // Fallback by ID if text matching did not find it
                             if (kafraTravelPhase == 1)
                             {
                                 foreach (var btn in buttons)
@@ -517,7 +616,7 @@ namespace RebuildBotPlugin.Controllers
                                     {
                                         btn.OnClick();
                                         kafraTravelPhase = 2;
-                                        lastKafraInteractionTime = now + UnityEngine.Random.Range(0.7f, 1.1f);
+                                        lastKafraInteractionTime = now;
                                         BotEngine.Instance?.LogEvent("[Travel] Selected Option 2 ('Teleport Service').");
                                         return true;
                                     }
@@ -531,7 +630,7 @@ namespace RebuildBotPlugin.Controllers
                                     {
                                         btn.OnClick();
                                         kafraTravelPhase = 3;
-                                        lastKafraInteractionTime = now + 2.5f;
+                                        lastKafraInteractionTime = now;
                                         BotEngine.Instance?.LogEvent($"[Travel] Clicked option {btn.Id} for '{nextHop.DestMap}'. Teleporting!");
                                         return true;
                                     }
@@ -541,10 +640,9 @@ namespace RebuildBotPlugin.Controllers
                         return true;
                     }
 
-                    // 2. Otherwise, if a dialogue box is open without an option menu, advance it!
                     if (dialogOpen)
                     {
-                        if (now - lastKafraInteractionTime >= BotConstants.HumanDialogAdvanceDelay)
+                        if (now - lastKafraInteractionTime >= 0.5f)
                         {
                             netManager.SendNpcAdvance();
                             lastKafraInteractionTime = now;
@@ -553,92 +651,128 @@ namespace RebuildBotPlugin.Controllers
                         return true;
                     }
 
-                    // 3. Handle timeouts and stalled interactions cleanly
                     if (kafraTravelPhase == 1 && !dialogOpen && !optionOpen)
-                    {
-                        if (now - lastKafraInteractionTime >= 1.5f)
-                        {
-                            Services.NpcInteractionHelper.CleanupNpcUi();
-                            kafraTravelPhase = 0;
-                            lastKafraInteractionTime = now + 0.5f;
-                            BotEngine.Instance?.LogEvent("[Travel] Kafra click timed out without response; cleanly retrying click.");
-                        }
-                    }
-                    else if (kafraTravelPhase == 2 && !optionOpen)
                     {
                         if (now - lastKafraInteractionTime >= 2.0f)
                         {
                             Services.NpcInteractionHelper.CleanupNpcUi();
                             kafraTravelPhase = 0;
-                            lastKafraInteractionTime = now + 0.5f;
+                            lastKafraInteractionTime = now;
+                            BotEngine.Instance?.LogEvent("[Travel] Kafra click timed out without response; cleanly retrying click.");
+                        }
+                    }
+                    else if (kafraTravelPhase == 2 && !optionOpen)
+                    {
+                        if (now - lastKafraInteractionTime >= 3.0f)
+                        {
+                            Services.NpcInteractionHelper.CleanupNpcUi();
+                            kafraTravelPhase = 0;
+                            lastKafraInteractionTime = now;
                             BotEngine.Instance?.LogEvent("[Travel] Kafra destination menu timed out; cleanly retrying interaction.");
                         }
                     }
                     else if (kafraTravelPhase == 3)
                     {
-                        // Waiting for teleport map change
-                        if (now - lastKafraInteractionTime >= 4.0f)
+                        if (now - lastKafraInteractionTime >= 5.0f)
                         {
                             Services.NpcInteractionHelper.CleanupNpcUi();
                             kafraTravelPhase = 0;
+                            lastKafraInteractionTime = now;
                             BotEngine.Instance?.LogEvent("[Travel] Teleport timed out; retrying Kafra interaction.");
                         }
                     }
-                    else if (now - lastKafraInteractionTime >= 3.0f)
+                    else if (now - lastKafraInteractionTime >= 4.0f)
                     {
-                        // Entire interaction stalled - cleanly reset UI and interaction locks before re-clicking
                         Services.NpcInteractionHelper.CleanupNpcUi();
                         kafraTravelPhase = 0;
-                        lastKafraInteractionTime = now + 0.5f;
-                        BotEngine.Instance?.LogEvent("[Travel] Kafra interaction stalled; cleanly closed dialogue/portrait and retrying click.");
+                        lastKafraInteractionTime = now;
                     }
                 }
                 return true;
             }
 
-            // Not a Kafra warp: reset kafra state
+            // 3. STANDARD PORTAL TRAVEL
             kafraTravelPhase = 0;
 
-            // 2. STANDARD PORTAL TRAVEL
+            bool isMoving = player.IsMoving || player.IsWalking;
+
+            if (!isMoving && player.CellPosition == lastRecordedPosition && currentTravelStepTarget != Vector2Int.zero)
+            {
+                stuckTimer += Time.deltaTime;
+                if (stuckTimer > 1.8f)
+                {
+                    BotEngine.Instance?.LogEvent($"[Travel] Stuck at ({player.CellPosition.x}, {player.CellPosition.y}) for > 1.8s. Re-planning travel route from current coordinate.");
+                    InvalidateTravelPlan();
+                    stuckTimer = 0f;
+                    return true;
+                }
+            }
+            else
+            {
+                lastRecordedPosition = player.CellPosition;
+                stuckTimer = 0f;
+            }
+
             float distToTravelStep = currentTravelStepTarget != Vector2Int.zero
                 ? Vector2.Distance(player.CellPosition, currentTravelStepTarget)
-                : 0f;
+                : float.MaxValue;
 
-            bool travelPreClick = player.IsMoving && currentTravelStepTarget != Vector2Int.zero && distToTravelStep <= 2.2f;
-            bool travelStoppedReady = !player.IsMoving && (now - lastTravelTime >= nextTravelDelay);
+            // Pipelined lookahead pre-click: when within 3.8 tiles of current step destination and at least 0.6s since last dispatch
+            bool travelPreClick = isMoving && currentTravelStepTarget != Vector2Int.zero && distToTravelStep <= 3.8f && (now - lastTravelTime >= 0.6f);
+            bool travelStoppedReady = !isMoving && (now - lastTravelTime >= nextTravelDelay);
 
             if (travelPreClick || travelStoppedReady)
             {
-                var bestWarp = nextHop;
-                string nextDestMap = bestWarp.DestMap;
-                var walkProvider = RoWalkDataProvider.Instance;
-                Vector2Int warpPos = bestWarp.GetWalkableTriggerTile(walkProvider != null ? walkProvider.WalkData : null, player.CellPosition);
+                string nextDestMap = nextHop.DestMap;
+                Vector2Int warpPos = activeTravelWarpTarget != Vector2Int.zero ? activeTravelWarpTarget : nextHop.GetWalkableTriggerTile(null, player.CellPosition);
                 float distToWarp = Vector2.Distance(player.CellPosition, warpPos);
-                bool isInsideWarp = bestWarp.IsInsideWarp(player.CellPosition);
+                bool isInsideWarp = nextHop.IsInsideWarp(player.CellPosition);
 
                 // If standing inside portal bounding box or within direct stepping distance, step right into it
                 if (isInsideWarp || distToWarp <= 1.8f)
                 {
                     currentState = BotState.TravelingToTargetMap;
                     netManager.MovePlayer(warpPos);
+                    currentTravelStepTarget = warpPos;
                     lastTravelTime = now;
-                    nextTravelDelay = 0.3f;
+                    nextTravelDelay = 0.25f;
                     BotEngine.Instance?.LogEvent($"[Travel] Stepping into portal for '{nextDestMap}' at ({warpPos.x}, {warpPos.y})!");
                     return true;
                 }
 
-                var travelWaypoints = MapNavMesh.Instance.FindRouteWaypoints(player.CellPosition, warpPos, 11);
-                Vector2Int travelTarget = (travelWaypoints != null && travelWaypoints.Count > 0)
-                    ? travelWaypoints[0]
-                    : warpPos;
+                // Advance waypoints if player is near current waypoint
+                Vector2Int targetWp = warpPos;
+                if (activeTravelWaypoints != null && activeTravelWaypoints.Count > 0)
+                {
+                    while (activeTravelWaypointIdx < activeTravelWaypoints.Count - 1 &&
+                           Vector2.Distance(player.CellPosition, activeTravelWaypoints[activeTravelWaypointIdx]) <= 3.5f)
+                    {
+                        activeTravelWaypointIdx++;
+                    }
+
+                    targetWp = activeTravelWaypoints[activeTravelWaypointIdx];
+                }
 
                 currentState = BotState.TravelingToTargetMap;
-                SafeMoveTowards(player.CellPosition, travelTarget, false);
-                currentTravelStepTarget = travelTarget;
-                lastTravelTime = now;
-                nextTravelDelay = UnityEngine.Random.Range(0.20f, 0.38f);
-                BotEngine.Instance?.LogEvent($"[Travel] Moving towards warp for '{nextDestMap}' at ({warpPos.x}, {warpPos.y}) [step: ({travelTarget.x}, {travelTarget.y}), dist: {distToWarp:F1}]. Route: {route.Count} map(s) remaining.");
-                return true;
+                if (SafeMoveTowards(player.CellPosition, targetWp, avoidPortals: false, forwardOnly: false, out Vector2Int stepDispatched))
+                {
+                    currentTravelStepTarget = stepDispatched;
+                    lastTravelTime = now;
+                    nextTravelDelay = isMoving ? 0.0f : UnityEngine.Random.Range(0.12f, 0.20f);
+                    BotEngine.Instance?.LogEvent($"[Travel] Moving towards warp for '{nextDestMap}' at ({warpPos.x}, {warpPos.y}) [step: ({stepDispatched.x}, {stepDispatched.y}), dist: {distToWarp:F1}]. Route: {cachedTravelRoute.Count} map(s) remaining.");
+                    return true;
+                }
+                else
+                {
+                    // Waypoint blocked, fallback to direct navigate towards warp
+                    if (NavigateTowards(player.CellPosition, warpPos, avoidPortals: false, hopDistance: 11, out Vector2Int directStep))
+                    {
+                        currentTravelStepTarget = directStep;
+                        lastTravelTime = now;
+                        nextTravelDelay = isMoving ? 0.0f : UnityEngine.Random.Range(0.12f, 0.20f);
+                        return true;
+                    }
+                }
             }
             return true;
         }
@@ -674,14 +808,13 @@ namespace RebuildBotPlugin.Controllers
 
             currentState = BotState.Wandering;
 
-            // Fluid pre-clicking check:
-            // Issue next waypoint when within 2.2 tiles of current step to maintain uninterrupted movement,
-            // or after natural reaction cadence when stopped
+            // Pipelined lookahead pre-click:
+            // Issue next waypoint when within 3.8 tiles of current step to maintain continuous uninterrupted movement
             float distToStep = currentStepTarget != Vector2Int.zero
                 ? Vector2.Distance(player.CellPosition, currentStepTarget)
-                : 0f;
+                : float.MaxValue;
 
-            bool isPreClickWindow = isMoving && currentStepTarget != Vector2Int.zero && distToStep <= 2.2f;
+            bool isPreClickWindow = isMoving && currentStepTarget != Vector2Int.zero && distToStep <= 3.8f && (now - lastWanderStepTime >= 0.6f);
             bool isStoppedReady = !isMoving && (now - lastWanderStepTime >= nextWanderDelay);
 
             if (isPreClickWindow || isStoppedReady)
@@ -712,24 +845,14 @@ namespace RebuildBotPlugin.Controllers
                     BotEngine.Instance?.LogEvent($"Exploring toward cold sector ({currentExplorationWaypoint.x}, {currentExplorationWaypoint.y}) - Dist: {distToWaypoint:F0} tiles");
                 }
 
-                Vector2Int stepTarget = currentExplorationWaypoint;
-                var routeWaypoints = MapNavMesh.Instance.FindRouteWaypoints(player.CellPosition, currentExplorationWaypoint, 11);
-                if (routeWaypoints != null && routeWaypoints.Count > 0)
+                if (NavigateTowards(player.CellPosition, currentExplorationWaypoint, BotConfigManager.Current.AvoidPortalsWhileWandering, 11, out Vector2Int stepDispatched))
                 {
-                    stepTarget = routeWaypoints[0];
-                }
-
-                if (SafeMoveTowards(player.CellPosition, stepTarget, BotConfigManager.Current.AvoidPortalsWhileWandering))
-                {
-                    currentStepTarget = stepTarget;
+                    currentStepTarget = stepDispatched;
                     lastWanderStepTime = now;
 
-                    // Human reaction cadence: 180ms - 360ms with rare glance pause (3% chance)
+                    // Continuous stride in motion: 0.0s delay. Brief glance when stopping at a destination
                     float roll = UnityEngine.Random.value;
-                    nextWanderDelay = (roll < 0.03f && !isPreClickWindow)
-                        ? UnityEngine.Random.Range(0.45f, 0.65f)
-                        : UnityEngine.Random.Range(0.18f, 0.36f);
-
+                    nextWanderDelay = isMoving ? 0.0f : ((roll < 0.03f) ? UnityEngine.Random.Range(0.35f, 0.50f) : UnityEngine.Random.Range(0.12f, 0.22f));
                     return;
                 }
                 else

@@ -70,7 +70,6 @@ namespace RebuildBotPlugin
         private int width;
         private int height;
         private ushort[] zoneMap;
-        private byte[] wallPenaltyMap;
         private int totalZones;
         private readonly Dictionary<ushort, int> zoneCellCounts = new Dictionary<ushort, int>();
 
@@ -92,7 +91,6 @@ namespace RebuildBotPlugin
             width = 0;
             height = 0;
             zoneMap = null;
-            wallPenaltyMap = null;
             totalZones = 0;
             zoneCellCounts.Clear();
         }
@@ -162,10 +160,10 @@ namespace RebuildBotPlugin
                             if (zoneMap[nidx] != 0 || !walkData.CellWalkable(nx, ny))
                                 continue;
 
-                            // Prevent corner cutting through non-walkable diagonals
+                            // Prevent corner cutting through non-walkable diagonals (only block if BOTH orthogonal cells are walls)
                             if (dir >= 4)
                             {
-                                if (!walkData.CellWalkable(cx, ny) || !walkData.CellWalkable(nx, cy))
+                                if (!walkData.CellWalkable(cx, ny) && !walkData.CellWalkable(nx, cy))
                                     continue;
                             }
 
@@ -179,68 +177,39 @@ namespace RebuildBotPlugin
             }
 
             totalZones = nextZoneId - 1;
-
-            // Build soft clearance costfield (wall avoidance penalty)
-            wallPenaltyMap = new byte[totalCells];
-            for (int y = 0; y < height; y++)
-            {
-                for (int x = 0; x < width; x++)
-                {
-                    int idx = x + y * width;
-                    if (zoneMap[idx] == 0) continue; // Unwalkable cell
-
-                    // Check if directly adjacent to an unwalkable cell or map boundary
-                    bool nearWall = false;
-                    for (int i = 0; i < 8; i++)
-                    {
-                        int nx = x + dx[i];
-                        int ny = y + dy[i];
-                        if (nx < 0 || ny < 0 || nx >= width || ny >= height || zoneMap[nx + ny * width] == 0)
-                        {
-                            nearWall = true;
-                            break;
-                        }
-                    }
-
-                    if (nearWall)
-                    {
-                        wallPenaltyMap[idx] = 14; // Direct wall-adjacent penalty
-                    }
-                }
-            }
-
-            // Second pass: mild penalty for tiles 1 step away from wall
-            for (int y = 0; y < height; y++)
-            {
-                for (int x = 0; x < width; x++)
-                {
-                    int idx = x + y * width;
-                    if (zoneMap[idx] == 0 || wallPenaltyMap[idx] != 0) continue;
-
-                    for (int i = 0; i < 4; i++) // Check 4 orthogonal neighbors
-                    {
-                        int nx = x + dx[i];
-                        int ny = y + dy[i];
-                        if (nx >= 0 && ny >= 0 && nx < width && ny < height && wallPenaltyMap[nx + ny * width] == 14)
-                        {
-                            wallPenaltyMap[idx] = 6; // 1-tile buffer mild penalty
-                            break;
-                        }
-                    }
-                }
-            }
-
             currentMap = mapName;
             sw.Stop();
 
-            Plugin.LogInfo($"[MapNavMesh] Analyzed map '{mapName}' ({width}x{height}) in {sw.ElapsedMilliseconds}ms: Found {totalZones} connected walkable zones with clearance costfield.");
+            Plugin.LogInfo($"[MapNavMesh] Analyzed map '{mapName}' ({width}x{height}) in {sw.ElapsedMilliseconds}ms: Found {totalZones} connected walkable zones.");
         }
 
         public ushort GetZoneId(int x, int y)
         {
             if (zoneMap == null || x < 0 || y < 0 || x >= width || y >= height)
                 return 0;
-            return zoneMap[x + y * width];
+
+            ushort z = zoneMap[x + y * width];
+            if (z != 0) return z;
+
+            // If tile itself is unmeshed (e.g. portal landing tile or decorative border), snap to nearest neighbor zone
+            for (int r = 1; r <= 3; r++)
+            {
+                for (int ox = -r; ox <= r; ox++)
+                {
+                    for (int oy = -r; oy <= r; oy++)
+                    {
+                        if (Math.Abs(ox) != r && Math.Abs(oy) != r) continue;
+                        int nx = x + ox;
+                        int ny = y + oy;
+                        if (nx >= 0 && ny >= 0 && nx < width && ny < height)
+                        {
+                            ushort nz = zoneMap[nx + ny * width];
+                            if (nz != 0) return nz;
+                        }
+                    }
+                }
+            }
+            return 0;
         }
 
         public ushort GetZoneId(Vector2Int pos) => GetZoneId(pos.x, pos.y);
@@ -249,25 +218,8 @@ namespace RebuildBotPlugin
         {
             ushort za = GetZoneId(start.x, start.y);
             ushort zb = GetZoneId(target.x, target.y);
-            if (za == 0) return false;
-            if (za == zb) return true;
-
-            // If target cell itself is unmeshed/non-walkable (e.g. monster on cliff edge, water, decor),
-            // check 8 adjacent neighbor cells to see if the target can be reached from an adjacent cell in zone za
-            if (zb == 0)
-            {
-                for (int dx = -1; dx <= 1; dx++)
-                {
-                    for (int dy = -1; dy <= 1; dy++)
-                    {
-                        if (dx == 0 && dy == 0) continue;
-                        if (GetZoneId(target.x + dx, target.y + dy) == za)
-                            return true;
-                    }
-                }
-            }
-
-            return false;
+            if (za == 0 || zb == 0) return false;
+            return za == zb;
         }
 
         public int GetZoneCellCount(Vector2Int pos)
@@ -282,8 +234,67 @@ namespace RebuildBotPlugin
         /// </summary>
         public List<Vector2Int> FindPath(Vector2Int start, Vector2Int target)
         {
-            if (!IsReachable(start, target)) return null;
-            if (start == target) return new List<Vector2Int> { start };
+            ushort startZone = GetZoneId(start.x, start.y);
+            ushort targetZone = GetZoneId(target.x, target.y);
+
+            if (startZone == 0 || targetZone == 0 || startZone != targetZone)
+                return null;
+
+            Vector2Int actualStart = start;
+            if (zoneMap[start.x + start.y * width] != startZone)
+            {
+                float bestDist = float.MaxValue;
+                for (int r = 1; r <= 3; r++)
+                {
+                    for (int ox = -r; ox <= r; ox++)
+                    {
+                        for (int oy = -r; oy <= r; oy++)
+                        {
+                            int nx = start.x + ox;
+                            int ny = start.y + oy;
+                            if (nx >= 0 && ny >= 0 && nx < width && ny < height && zoneMap[nx + ny * width] == startZone)
+                            {
+                                float d = (ox * ox) + (oy * oy);
+                                if (d < bestDist)
+                                {
+                                    bestDist = d;
+                                    actualStart = new Vector2Int(nx, ny);
+                                }
+                            }
+                        }
+                    }
+                    if (bestDist < float.MaxValue) break;
+                }
+            }
+
+            Vector2Int actualTarget = target;
+            if (zoneMap[target.x + target.y * width] != startZone)
+            {
+                float bestDist = float.MaxValue;
+                for (int r = 1; r <= 3; r++)
+                {
+                    for (int ox = -r; ox <= r; ox++)
+                    {
+                        for (int oy = -r; oy <= r; oy++)
+                        {
+                            int nx = target.x + ox;
+                            int ny = target.y + oy;
+                            if (nx >= 0 && ny >= 0 && nx < width && ny < height && zoneMap[nx + ny * width] == startZone)
+                            {
+                                float d = (ox * ox) + (oy * oy);
+                                if (d < bestDist)
+                                {
+                                    bestDist = d;
+                                    actualTarget = new Vector2Int(nx, ny);
+                                }
+                            }
+                        }
+                    }
+                    if (bestDist < float.MaxValue) break;
+                }
+            }
+
+            if (actualStart == actualTarget) return new List<Vector2Int> { actualStart };
 
             var walkProvider = RoWalkDataProvider.Instance;
             if (walkProvider == null || walkProvider.WalkData == null) return null;
@@ -294,21 +305,21 @@ namespace RebuildBotPlugin
 
             openHeap.Clear();
 
-            int startIndex = start.x + start.y * width;
-            int targetIndex = target.x + target.y * width;
+            int startIndex = actualStart.x + actualStart.y * width;
+            int targetIndex = actualTarget.x + actualTarget.y * width;
 
             gScores[startIndex] = 0;
             parentNodes[startIndex] = -1;
             closedMarks[startIndex] = session;
 
-            openHeap.Push(startIndex, Heuristic(start, target));
+            openHeap.Push(startIndex, Heuristic(actualStart, actualTarget));
 
             int[] dx = { 0, 0, 1, -1, 1, -1, 1, -1 };
             int[] dy = { 1, -1, 0, 0, 1, 1, -1, -1 };
             int[] cost = { 10, 10, 10, 10, 14, 14, 14, 14 };
 
             bool found = false;
-            int maxIterations = 25000;
+            int maxIterations = Math.Max(width * height, 100000);
             int iterations = 0;
 
             while (openHeap.Count > 0 && iterations++ < maxIterations)
@@ -338,15 +349,14 @@ namespace RebuildBotPlugin
                     if (zoneMap[nidx] != zoneMap[startIndex])
                         continue;
 
-                    // Prevent diagonal cutting
+                    // Prevent diagonal cutting (only block if BOTH orthogonal cells are walls)
                     if (i >= 4)
                     {
-                        if (!walkData.CellWalkable(cx, ny) || !walkData.CellWalkable(nx, cy))
+                        if (!walkData.CellWalkable(cx, ny) && !walkData.CellWalkable(nx, cy))
                             continue;
                     }
 
-                    int penalty = (wallPenaltyMap != null) ? wallPenaltyMap[nidx] : 0;
-                    int tentativeG = currentG + cost[i] + penalty;
+                    int tentativeG = currentG + cost[i];
 
                     if (closedMarks[nidx] != session || tentativeG < gScores[nidx])
                     {
@@ -354,7 +364,7 @@ namespace RebuildBotPlugin
                         gScores[nidx] = tentativeG;
                         parentNodes[nidx] = currIdx;
 
-                        int h = Heuristic(new Vector2Int(nx, ny), target);
+                        int h = Heuristic(new Vector2Int(nx, ny), actualTarget);
                         openHeap.Push(nidx, tentativeG + h);
                     }
                 }
@@ -379,7 +389,8 @@ namespace RebuildBotPlugin
         {
             int dx = Math.Abs(a.x - b.x);
             int dy = Math.Abs(a.y - b.y);
-            return (Math.Max(dx, dy) * 10) + (Math.Min(dx, dy) * 4);
+            int baseH = (Math.Max(dx, dy) * 10) + (Math.Min(dx, dy) * 4);
+            return baseH + (baseH >> 10);
         }
 
         /// <summary>

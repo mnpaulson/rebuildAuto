@@ -47,11 +47,15 @@ namespace RebuildBotPlugin.Controllers
         public CharacterSkill ParseSkill(string skillName)
         {
             if (string.IsNullOrWhiteSpace(skillName)) return CharacterSkill.None;
-            string clean = skillName.Trim().Replace(" ", "");
+            string clean = skillName.Trim().Replace(" ", "").Replace("_", "").Replace("-", "").Replace("'", "");
             if (Enum.TryParse<CharacterSkill>(clean, true, out var skill))
                 return skill;
             if (string.Equals(clean, "IncreaseAgi", StringComparison.OrdinalIgnoreCase))
                 return CharacterSkill.IncreaseAgility;
+            if (string.Equals(clean, "OwlsEye", StringComparison.OrdinalIgnoreCase))
+                return CharacterSkill.OwlEye;
+            if (string.Equals(clean, "VulturesEye", StringComparison.OrdinalIgnoreCase))
+                return CharacterSkill.VultureEye;
             return CharacterSkill.None;
         }
 
@@ -119,16 +123,17 @@ namespace RebuildBotPlugin.Controllers
                 case CharacterSkill.Heal:
                     return 9.0f;
                 default:
-                    return BotConfigManager.Current.AttackRange; // Melee range (e.g. 2.0)
+                    return CombatController.GetEffectiveAttackRange(); // Dynamic weapon range (melee 1.8, bow 5-15)
             }
         }
 
         public float GetMaxCombatCastRange()
         {
+            float dynamicAttackRange = CombatController.GetEffectiveAttackRange();
             var rules = BotConfigManager.Current.SkillRules;
-            if (rules == null || rules.Count == 0) return BotConfigManager.Current.AttackRange;
+            if (rules == null || rules.Count == 0) return dynamicAttackRange;
 
-            float maxRange = BotConfigManager.Current.AttackRange;
+            float maxRange = dynamicAttackRange;
             foreach (var rule in rules)
             {
                 if (!rule.Enabled || rule.Trigger == SkillTriggerType.BuffMaintenance) continue;

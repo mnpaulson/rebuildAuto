@@ -332,5 +332,7 @@
     "AutoJobChange": true,
     "TargetJob": "Swordman",
     "AutoClaimBardGifts": true,
-    "AutoEquipEmptySlots": true
+    "AutoEquipEmptySlots": true,
+    "AutoEquipBestArrow": true,
+    "MinArrowCount": 30
 }
