@@ -264,7 +264,7 @@ namespace RebuildBotPlugin.Controllers
                                 if (!portalBlocked)
                                 {
                                     netManager.MovePlayer(candidate);
-                                    BotEngine.Instance?.LogDebug($"[Move] Verified path step to ({candidate.x}, {candidate.y}) [offset: {angleOffset:F0}°, dist: {d}] ({steps} A* steps).");
+                                    BotEngine.Instance?.LogEvent($"[Move] Step verified to ({candidate.x}, {candidate.y}) [offset: {angleOffset:F0}°, dist: {d}] ({steps} A* steps).");
                                     return true;
                                 }
                             }
@@ -272,7 +272,7 @@ namespace RebuildBotPlugin.Controllers
                     }
                 }
 
-                BotEngine.Instance?.LogDebug($"[Move] Pathfinding blocked from ({currentPos.x}, {currentPos.y}) towards destination ({destination.x}, {destination.y})!");
+                BotEngine.Instance?.LogEvent($"[Move] Path blocked from ({currentPos.x}, {currentPos.y}) towards destination ({destination.x}, {destination.y})!");
                 return false;
             }
             else
@@ -404,7 +404,7 @@ namespace RebuildBotPlugin.Controllers
                         NavigateTowards(player.CellPosition, nextHop.FromPos, avoidPortals: false, hopDistance: 11);
                         lastTravelTime = now;
                         nextTravelDelay = UnityEngine.Random.Range(0.20f, 0.38f);
-                        BotEngine.Instance?.LogDebug($"[Travel] Walking towards Kafra for teleport to '{nextHop.DestMap}' (dist: {distToKafra:F1}, stopTarget: {kafraStopDistance:F1}).");
+                        BotEngine.Instance?.LogEvent($"[Travel] Walking towards Kafra for teleport to '{nextHop.DestMap}' (dist: {distToKafra:F1}, stopTarget: {kafraStopDistance:F1}).");
                     }
                     return true;
                 }
@@ -632,7 +632,7 @@ namespace RebuildBotPlugin.Controllers
                 currentTravelStepTarget = travelTarget;
                 lastTravelTime = now;
                 nextTravelDelay = UnityEngine.Random.Range(0.20f, 0.38f);
-                BotEngine.Instance?.LogDebug($"[Travel] Moving towards warp for '{nextDestMap}' at ({warpPos.x}, {warpPos.y}) [step: ({travelTarget.x}, {travelTarget.y}), dist: {distToWarp:F1}]. Route: {route.Count} map(s) left.");
+                BotEngine.Instance?.LogEvent($"[Travel] Moving towards warp for '{nextDestMap}' at ({warpPos.x}, {warpPos.y}) [step: ({travelTarget.x}, {travelTarget.y}), dist: {distToWarp:F1}]. Route: {route.Count} map(s) remaining.");
                 return true;
             }
             return true;

@@ -96,7 +96,7 @@ namespace RebuildBotPlugin
 
             if (CurrentState != lastLoggedState)
             {
-                LogDebug($"[State] {lastLoggedState} -> {CurrentState}");
+                LogEvent($"[State] {lastLoggedState} -> {CurrentState}");
                 lastLoggedState = CurrentState;
             }
 
@@ -322,7 +322,8 @@ namespace RebuildBotPlugin
                         netManager.SendPickUpItem(nearestItem.EntityId);
                         lastLootTime = now;
                         CurrentState = BotState.LootingItem;
-                        LogEvent($"Picking up loot item: {nearestItem.ItemName} (ID: {nearestItem.EntityId})");
+                        float distToItem = Vector2.Distance(player.CellPosition, new Vector2(nearestItem.transform.position.x, nearestItem.transform.position.z));
+                        LogEvent($"[Loot] Picking up {nearestItem.ItemName} (ID: {nearestItem.EntityId}, dist: {distToItem:F1} tiles).");
                     }
                     return;
                 }

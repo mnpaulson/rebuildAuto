@@ -21,6 +21,8 @@ namespace RebuildBotPlugin.Controllers
         private float targetApproachStartTime = 0f;
         private float targetApproachProgressTime = 0f;
         private float lastDistanceToTarget = float.MaxValue;
+        private float lastAttackLogTime = 0f;
+        private float lastApproachLogTime = 0f;
 
         public void Clear()
         {
@@ -29,6 +31,8 @@ namespace RebuildBotPlugin.Controllers
             CurrentTargetName = "None";
             CurrentTargetHp = 0;
             CurrentTargetMaxHp = 0;
+            lastAttackLogTime = 0f;
+            lastApproachLogTime = 0f;
         }
 
         public void OnTargetDefeated()
@@ -144,7 +148,12 @@ namespace RebuildBotPlugin.Controllers
                     netManager.SendAttack(target.Id);
                     lastAttackTime = now;
                     currentState = BotState.AttackingTarget;
-                    BotEngine.Instance?.LogDebug($"[Combat] In range ({dist:F1} <= {combatRange}), attacking {target.Name} (ID: {target.Id}) [HP: {target.Hp}/{target.MaxHp}].");
+
+                    if (now - lastAttackLogTime >= 1.5f || lastTargetHp != target.Hp)
+                    {
+                        BotEngine.Instance?.LogEvent($"[Combat] Attacking {target.Name} (ID: {target.Id}, dist: {dist:F1} <= {combatRange:F1}) [HP: {target.Hp}/{target.MaxHp}].");
+                        lastAttackLogTime = now;
+                    }
                 }
             }
             else
@@ -195,7 +204,11 @@ namespace RebuildBotPlugin.Controllers
                         lastAttackTime = now;
                     }
 
-                    BotEngine.Instance?.LogDebug($"[Combat] Approaching {target.Name} towards attack tile ({attackTile.x}, {attackTile.y}) [dist: {dist:F1} > range: {combatRange}].");
+                    if (now - lastApproachLogTime >= 1.5f)
+                    {
+                        BotEngine.Instance?.LogEvent($"[Combat] Approaching {target.Name} (ID: {target.Id}, dist: {dist:F1} > {combatRange:F1}) towards attack tile ({attackTile.x}, {attackTile.y}).");
+                        lastApproachLogTime = now;
+                    }
                 }
             }
         }

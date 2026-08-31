@@ -241,12 +241,14 @@ namespace RebuildBotPlugin.Controllers
             {
                 if (IsMonsterPathable(playerPos, item.Item1.CellPosition))
                 {
+                    string tierName = item.Item3 == 0 ? "Active Attacker" : item.Item3 == 1 ? "Aggressive Threat" : "Standard Target";
+                    BotEngine.Instance?.LogEvent($"[Targeting] Selected {item.Item1.Name} (ID: {item.Item1.Id}, dist: {item.Item2:F1} tiles, HP: {item.Item1.Hp}/{item.Item1.MaxHp}) [{tierName}].");
                     return item.Item1;
                 }
                 else
                 {
                     MarkUnreachable(item.Item1.Id, 6.0f);
-                    BotEngine.Instance?.LogDebug($"[Targeting] Skipping candidate {item.Item1.Name} (ID: {item.Item1.Id}) at ({item.Item1.CellPosition.x}, {item.Item1.CellPosition.y}) - path blocked by terrain/cliff. Ignoring for 6s.");
+                    BotEngine.Instance?.LogEvent($"[Targeting] Candidate {item.Item1.Name} (ID: {item.Item1.Id}) at ({item.Item1.CellPosition.x}, {item.Item1.CellPosition.y}) path blocked by terrain. Blacklisting for 6s.");
                 }
             }
 
