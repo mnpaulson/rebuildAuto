@@ -642,12 +642,13 @@ namespace RebuildBotPlugin
             Vector2Int playerSec = MapHeatmap.Instance.GetSectorKey(playerPos);
             Vector2Int waypointSec = currentWaypoint != Vector2Int.zero ? MapHeatmap.Instance.GetSectorKey(currentWaypoint) : new Vector2Int(-1, -1);
 
-            Color colorUnvisited = new Color(0.1f, 0.7f, 0.95f, 0.9f); // Cyan
-            Color colorCool = new Color(0.2f, 0.75f, 0.3f, 0.9f);      // Green
-            Color colorWarm = new Color(0.9f, 0.75f, 0.1f, 0.9f);     // Yellow
-            Color colorHot = new Color(0.95f, 0.2f, 0.15f, 0.95f);    // Red
+            Color colorUnvisited = new Color(0.1f, 0.75f, 0.98f, 0.95f); // Bright Ice Blue / Cyan
+            Color colorCold = new Color(0.15f, 0.65f, 0.3f, 0.9f);       // Deep Forest Green (> 7.5 min)
+            Color colorCool = new Color(0.35f, 0.85f, 0.4f, 0.9f);       // Light Green (3m - 7.5m)
+            Color colorWarm = new Color(0.95f, 0.75f, 0.1f, 0.95f);      // Amber / Warm Yellow (45s - 3m)
+            Color colorHot = new Color(0.95f, 0.2f, 0.15f, 0.98f);       // Bright Hot Red (< 45s)
             Color colorBlacklist = new Color(0.25f, 0.25f, 0.25f, 0.95f); // Dark Gray
-            Color colorWaypoint = new Color(1f, 0.9f, 0.05f, 1f);       // Gold
+            Color colorWaypoint = new Color(1f, 0.9f, 0.05f, 1f);        // Gold
             Color colorPlayer = Color.white;
 
             for (int y = 0; y < texH; y++)
@@ -671,12 +672,14 @@ namespace RebuildBotPlugin
                     else if (visits.TryGetValue(sec, out float visitTime))
                     {
                         float age = now - visitTime;
-                        if (age < 30f)
+                        if (age < 45f)
                             heatmapGridTex.SetPixel(x, y, colorHot);
-                        else if (age < 90f)
+                        else if (age < 180f)
                             heatmapGridTex.SetPixel(x, y, colorWarm);
-                        else
+                        else if (age < 450f)
                             heatmapGridTex.SetPixel(x, y, colorCool);
+                        else
+                            heatmapGridTex.SetPixel(x, y, colorCold);
                     }
                     else
                     {

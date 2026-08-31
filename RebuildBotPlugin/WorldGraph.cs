@@ -274,17 +274,65 @@ namespace RebuildBotPlugin
 
         public List<WarpConnection> FindRoute(string startMap, string targetMap)
         {
-            if (string.Equals(startMap, targetMap, StringComparison.OrdinalIgnoreCase))
-                return new List<WarpConnection>();
+            return FindZoneAwareRoute(startMap, Vector2Int.zero, targetMap, null, null);
+        }
 
-            var distances = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
-            var parentWarp = new Dictionary<string, WarpConnection>(StringComparer.OrdinalIgnoreCase);
-            var pq = new List<(string map, float dist)>();
+        public List<WarpConnection> FindZoneAwareRoute(
+            string startMap,
+            Vector2Int startPos,
+            string targetMap,
+            Vector2Int? targetPos = null,
+            Func<Vector2Int, Vector2Int, bool> isReachableOnStartMap = null)
+        {
+            if (string.IsNullOrEmpty(startMap) || string.IsNullOrEmpty(targetMap))
+                return null;
 
-            distances[startMap] = 0f;
-            pq.Add((startMap, 0f));
+            bool isSameMap = string.Equals(startMap, targetMap, StringComparison.OrdinalIgnoreCase);
 
-            bool found = false;
+            // 1. If start and target are on the same map, check if directly reachable locally
+            if (isSameMap)
+            {
+                if (!targetPos.HasValue)
+                    return new List<WarpConnection>();
+
+                if (isReachableOnStartMap != null && isReachableOnStartMap(startPos, targetPos.Value))
+                    return new List<WarpConnection>();
+            }
+
+            // 2. Determine initial reachable warps leaving startMap from the current zone
+            if (!MapNodes.TryGetValue(startMap, out var startMapWarps) || startMapWarps.Count == 0)
+                return null;
+
+            var reachableStartWarps = new List<WarpConnection>();
+            foreach (var w in startMapWarps)
+            {
+                if (isReachableOnStartMap == null || isReachableOnStartMap(startPos, w.CenterPos))
+                {
+                    reachableStartWarps.Add(w);
+                }
+            }
+
+            if (reachableStartWarps.Count == 0)
+            {
+                // No warps reachable in the current disconnected zone!
+                return null;
+            }
+
+            // 3. Edge-based Dijkstra search over WarpConnection transitions
+            var distances = new Dictionary<WarpConnection, float>();
+            var parentWarp = new Dictionary<WarpConnection, WarpConnection>();
+            var pq = new List<(WarpConnection warp, float dist)>();
+
+            // Seed initial warps leaving startMap from current zone
+            foreach (var warp in reachableStartWarps)
+            {
+                float edgeCost = warp.IsKafraTeleport ? 0.2f : 1.0f;
+                distances[warp] = edgeCost;
+                parentWarp[warp] = null;
+                pq.Add((warp, edgeCost));
+            }
+
+            WarpConnection bestEndWarp = null;
             while (pq.Count > 0)
             {
                 int bestIdx = 0;
@@ -301,42 +349,62 @@ namespace RebuildBotPlugin
                 var current = pq[bestIdx];
                 pq.RemoveAt(bestIdx);
 
-                if (current.dist > distances[current.map])
+                if (current.dist > distances[current.warp])
                     continue;
 
-                if (string.Equals(current.map, targetMap, StringComparison.OrdinalIgnoreCase))
+                // Check if this warp lands on targetMap
+                if (string.Equals(current.warp.DestMap, targetMap, StringComparison.OrdinalIgnoreCase))
                 {
-                    found = true;
-                    break;
+                    if (isSameMap && targetPos.HasValue && isReachableOnStartMap != null)
+                    {
+                        // If re-entering the original startMap, ensure this warp lands in the zone containing targetPos
+                        if (isReachableOnStartMap(current.warp.DestPos, targetPos.Value))
+                        {
+                            bestEndWarp = current.warp;
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        bestEndWarp = current.warp;
+                        break;
+                    }
                 }
 
-                if (MapNodes.TryGetValue(current.map, out var warps))
+                // Expand warps leaving current.warp.DestMap
+                if (MapNodes.TryGetValue(current.warp.DestMap, out var nextWarps))
                 {
-                    foreach (var warp in warps)
+                    foreach (var nextWarp in nextWarps)
                     {
-                        // Kafra teleports cost 0.2f, regular portals cost 1.0f
-                        float edgeCost = warp.IsKafraTeleport ? 0.2f : 1.0f;
+                        // If traversing back across startMap, verify startMap zone reachability
+                        if (string.Equals(current.warp.DestMap, startMap, StringComparison.OrdinalIgnoreCase) && isReachableOnStartMap != null)
+                        {
+                            if (!isReachableOnStartMap(current.warp.DestPos, nextWarp.CenterPos))
+                                continue;
+                        }
+
+                        float edgeCost = nextWarp.IsKafraTeleport ? 0.2f : 1.0f;
                         float newDist = current.dist + edgeCost;
 
-                        if (!distances.TryGetValue(warp.DestMap, out float oldDist) || newDist < oldDist)
+                        if (!distances.TryGetValue(nextWarp, out float oldDist) || newDist < oldDist)
                         {
-                            distances[warp.DestMap] = newDist;
-                            parentWarp[warp.DestMap] = warp;
-                            pq.Add((warp.DestMap, newDist));
+                            distances[nextWarp] = newDist;
+                            parentWarp[nextWarp] = current.warp;
+                            pq.Add((nextWarp, newDist));
                         }
                     }
                 }
             }
 
-            if (!found) return null;
+            if (bestEndWarp == null) return null;
 
             // Reconstruct path
             var route = new List<WarpConnection>();
-            string curr = targetMap;
-            while (parentWarp.TryGetValue(curr, out var warp))
+            var curr = bestEndWarp;
+            while (curr != null)
             {
-                route.Insert(0, warp);
-                curr = warp.FromMap;
+                route.Insert(0, curr);
+                curr = parentWarp.TryGetValue(curr, out var p) ? p : null;
             }
             return route;
         }

@@ -4,6 +4,7 @@ using Assets.Scripts.MapEditor;
 using Assets.Scripts.Network;
 using Assets.Scripts.PlayerControl;
 using Assets.Scripts.UI;
+using RebuildBotPlugin.Services;
 using UnityEngine;
 
 namespace RebuildBotPlugin.Controllers
@@ -273,19 +274,32 @@ namespace RebuildBotPlugin.Controllers
             }
         }
 
-        public bool ProcessTravel(NetworkManager netManager, ServerControllable player, float now, ref BotState currentState)
+        public bool ProcessTravel(NetworkManager netManager, ServerControllable player, float now, ref BotState currentState, Vector2Int? targetCellPos = null)
         {
             bool isTownRoutine = BotEngine.Instance != null && BotEngine.Instance.TownRoutine.IsActive;
             string destinationMap = isTownRoutine
                 ? TownRoutineController.BaseMap
                 : BotConfigManager.Current.TargetMap;
 
-            if (string.IsNullOrWhiteSpace(destinationMap) ||
-                string.Equals(netManager.CurrentMap, destinationMap, StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(destinationMap))
             {
                 kafraTravelPhase = 0;
                 kafraStopDistance = 0f;
                 return false;
+            }
+
+            bool isSameMap = string.Equals(netManager.CurrentMap, destinationMap, StringComparison.OrdinalIgnoreCase);
+
+            // If start and target are on the same map:
+            // Check if player can reach targetCellPos locally
+            if (isSameMap)
+            {
+                if (!targetCellPos.HasValue || MapNavMesh.Instance.IsReachable(player.CellPosition, targetCellPos.Value))
+                {
+                    kafraTravelPhase = 0;
+                    kafraStopDistance = 0f;
+                    return false;
+                }
             }
 
             if (!BotConfigManager.Current.AutoTravel && !isTownRoutine)
@@ -293,10 +307,46 @@ namespace RebuildBotPlugin.Controllers
                 return false;
             }
 
-            var route = WorldGraph.Instance.FindRoute(netManager.CurrentMap, destinationMap);
+            var route = WorldGraph.Instance.FindZoneAwareRoute(
+                netManager.CurrentMap,
+                player.CellPosition,
+                destinationMap,
+                targetCellPos,
+                (a, b) => MapNavMesh.Instance.IsReachable(a, b));
+
             if (route == null || route.Count == 0)
             {
-                BotEngine.Instance?.LogEvent($"[Travel Warning] No valid warp route found from '{netManager.CurrentMap}' to '{destinationMap}'.");
+                if (route == null)
+                {
+                    // Isolated pocket / disconnected zone with no route out!
+                    // Solution 2: Escape via Fly Wing (or Butterfly Wing in town)
+                    bool inTown = TownRoutineController.IsTownMap(netManager.CurrentMap);
+                    if (!inTown)
+                    {
+                        int wingId = InventoryHelper.FindFirstItemId(601, 12323);
+                        if (wingId > 0 && now - lastTravelTime >= 2.0f)
+                        {
+                            netManager.SendUseItem(wingId);
+                            lastTravelTime = now;
+                            currentState = BotState.Fleeing;
+                            BotEngine.Instance?.LogEvent($"[Navigation] Trapped in isolated zone on '{netManager.CurrentMap}'! Used Fly Wing (ID: {wingId}) to escape pocket.");
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        int bwingId = InventoryHelper.FindFirstItemId(602, 12324);
+                        if (bwingId > 0 && now - lastTravelTime >= 2.0f)
+                        {
+                            netManager.SendUseItem(bwingId);
+                            lastTravelTime = now;
+                            BotEngine.Instance?.LogEvent($"[Navigation] Trapped in isolated zone in town '{netManager.CurrentMap}'! Used Butterfly Wing to return to save point.");
+                            return true;
+                        }
+                    }
+
+                    BotEngine.Instance?.LogEvent($"[Travel Warning] No valid warp route found from current zone on '{netManager.CurrentMap}' to '{destinationMap}'.");
+                }
                 return false;
             }
 
@@ -312,6 +362,7 @@ namespace RebuildBotPlugin.Controllers
                 foreach (var warp in connectingWarps)
                 {
                     if (!warp.IsKafraTeleport) continue;
+                    if (!MapNavMesh.Instance.IsReachable(player.CellPosition, warp.FromPos)) continue;
                     float d = Vector2.Distance(player.CellPosition, warp.FromPos);
                     if (d < bestKafraDist)
                     {

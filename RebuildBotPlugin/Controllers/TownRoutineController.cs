@@ -465,6 +465,13 @@ namespace RebuildBotPlugin.Controllers
                         return true;
                     }
 
+                    if (!MapNavMesh.Instance.IsReachable(player.CellPosition, GeneralVendorPosition))
+                    {
+                        var travelState = BotState.TravelingToTargetMap;
+                        navigation.ProcessTravel(netManager, player, now, ref travelState, GeneralVendorPosition);
+                        return true;
+                    }
+
                     if (!player.IsMoving && now - lastActionTime >= 0.3f)
                     {
                         navigation.NavigateTowards(player.CellPosition, GeneralVendorPosition, avoidPortals: false, hopDistance: 11);
@@ -533,6 +540,13 @@ namespace RebuildBotPlugin.Controllers
                 stepPhase = 0;
                 lastActionTime = now;
                 BotEngine.Instance?.LogEvent($"[Town Routine] Reached {targetName} (dist: {dist:F1} tiles). Opening interaction.");
+                return true;
+            }
+
+            if (!MapNavMesh.Instance.IsReachable(player.CellPosition, targetPos))
+            {
+                var travelState = BotState.TravelingToTargetMap;
+                navigation.ProcessTravel(NetworkManager.Instance, player, now, ref travelState, targetPos);
                 return true;
             }
 

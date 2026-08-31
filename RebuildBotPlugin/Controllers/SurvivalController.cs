@@ -385,7 +385,7 @@ namespace RebuildBotPlugin.Controllers
             }
 
             // 3. Monster Avoidance Check (Highest Priority - Teleport or flee immediately!)
-            if (BotConfigManager.Current.AutoAvoidMonsters)
+            if (BotConfigManager.Current.AutoAvoidMonsters && !TownRoutineController.IsTownMap(netManager.CurrentMap))
             {
                 var dangerMonster = targeting.FindAvoidanceMonster();
                 if (dangerMonster != null)
