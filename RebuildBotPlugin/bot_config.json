@@ -21,16 +21,13 @@
     502,
     503,
     512,
-    507,
     519,
-    528,
-    517,
     516
   ],
   "AutoAspdPotion": true,
   "AspdPotionPreference": "Auto",
   "ItemRules": {
-    "Red Herb": "Keep",
+    "Red Herb": "Sell",
     "Grape": "Store",
     "Green Herb": "Sell",
     "Rainbow Carrot": "Sell",
@@ -82,7 +79,9 @@
     "Resin": "Sell",
     "Spore Doll": "Sell",
     "Wolf Card": "Store",
-    "Barren Trunk": "Sell"
+    "Barren Trunk": "Sell",
+    "Monster\u0027s Feed": "Sell",
+    "Meat": "Sell"
   },
   "ReturnToBaseWeightPercent": 90,
   "AutoReturnToBaseOnWeight": true,
@@ -315,7 +314,7 @@
     }
   ],
   "AutoReconnect": true,
-  "AutoReconnectDelaySeconds": 4.0,
+  "AutoReconnectDelaySeconds": 4,
   "MaxReconnectAttempts": 10,
   "PreferredCharacterSlot": -1
 }

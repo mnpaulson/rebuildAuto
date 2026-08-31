@@ -20,7 +20,21 @@ namespace RebuildBotPlugin.Controllers
         private bool isRecovering = false;
 
         public float LastFlyWingTime => lastFlyWingTime;
-        public bool IsRecovering => isRecovering;
+        public bool IsRecovering => isRecovering && BotConfigManager.Current.AutoSitToRecover;
+
+        public void Clear()
+        {
+            isRecovering = false;
+            lastFlyWingTime = 0f;
+            lastPotionTime = 0f;
+            lastFleeStepTime = 0f;
+            lastAspdPotionTime = 0f;
+        }
+
+        public void ClearRecovery()
+        {
+            isRecovering = false;
+        }
 
         public bool IsPlayerSitting(ServerControllable player)
         {
@@ -425,13 +439,26 @@ namespace RebuildBotPlugin.Controllers
             }
 
             // 4. Safe Rest & Recovery (Sit/Stand State Machine)
-            if (BotConfigManager.Current.AutoSitToRecover)
+            if (!BotConfigManager.Current.AutoSitToRecover)
+            {
+                if (isRecovering) isRecovering = false;
+                if (isSitting)
+                {
+                    netManager.ChangePlayerSitStand(false);
+                    BotEngine.Instance?.LogEvent("[Rest] AutoSitToRecover disabled. Standing up.");
+                }
+            }
+            else
             {
                 // Enter recovery mode when out of potions and HP <= SitHpPercent or EmergencyFlyWing threshold
                 float sitThreshold = Math.Max(BotConfigManager.Current.SitHpPercent, BotConfigManager.Current.EmergencyFlyWingHpPercent);
                 if (isOutOfPotions && hpPercent <= sitThreshold)
                 {
-                    isRecovering = true;
+                    if (!isRecovering)
+                    {
+                        isRecovering = true;
+                        BotEngine.Instance?.LogEvent($"[Rest] Entered recovery mode (Out of HP potions, HP: {hpPercent:F0}% <= {sitThreshold:F0}%).");
+                    }
                 }
 
                 // Exit recovery mode when fully restored to StandHpPercent or potions are replenished

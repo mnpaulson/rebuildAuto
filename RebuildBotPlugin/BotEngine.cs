@@ -113,6 +113,7 @@ namespace RebuildBotPlugin
             Loot.Clear();
             Navigation.ResetWander();
             Skills.Clear();
+            Survival.ClearRecovery();
         }
 
         private void Update()
@@ -124,6 +125,7 @@ namespace RebuildBotPlugin
                     Services.NpcInteractionHelper.CleanupNpcUi();
                     Navigation.ResetWander();
                     Login.Clear();
+                    Survival.ClearRecovery();
                     wasBotEnabled = false;
                 }
                 CurrentState = BotState.Disabled;
