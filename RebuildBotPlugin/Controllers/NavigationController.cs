@@ -80,6 +80,13 @@ namespace RebuildBotPlugin.Controllers
                     if (playerZone != 0 && MapNavMesh.Instance.GetZoneId(candidate) != playerZone)
                         continue;
 
+                    string currentMap = NetworkManager.Instance != null ? NetworkManager.Instance.CurrentMap : "";
+                    if (BotConfigManager.Current.AvoidPortalsWhileWandering && !string.IsNullOrEmpty(currentMap))
+                    {
+                        if (WorldGraph.Instance.IsNearPortal(currentMap, candidate, BotConfigManager.Current.PortalSafetyRadius))
+                            continue;
+                    }
+
                     float distToPlayer = Vector2.Distance(playerPos, candidate);
                     candidates.Add((candidate, distToPlayer));
                 }
@@ -87,6 +94,12 @@ namespace RebuildBotPlugin.Controllers
 
             if (candidates.Count == 0)
             {
+                string currentMap = NetworkManager.Instance != null ? NetworkManager.Instance.CurrentMap : "";
+                if (BotConfigManager.Current.AvoidPortalsWhileWandering && !string.IsNullOrEmpty(currentMap))
+                {
+                    if (WorldGraph.Instance.IsNearPortal(currentMap, monsterPos, BotConfigManager.Current.PortalSafetyRadius))
+                        return Vector2Int.zero;
+                }
                 return monsterPos;
             }
 

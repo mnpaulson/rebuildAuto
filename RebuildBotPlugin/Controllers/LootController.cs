@@ -34,10 +34,11 @@ namespace RebuildBotPlugin.Controllers
             else
             {
                 info.Attempts++;
-                if (info.Attempts >= 3 || (now - info.FirstAttemptTime > 3.5f))
+                // Wall-clock watchdog: only blacklist if 4.5 seconds elapse without item being collected
+                if (now - info.FirstAttemptTime > 4.5f)
                 {
-                    info.BlacklistUntil = now + 30.0f; // Temporarily ignore for 30s
-                    BotEngine.Instance?.LogEvent($"[Loot] Item {entityId} unreachable or failed after {info.Attempts} attempts. Ignoring for 30s.");
+                    info.BlacklistUntil = now + 20.0f; // Temporarily ignore for 20s
+                    BotEngine.Instance?.LogEvent($"[Loot] Item {entityId} unreachable after {(now - info.FirstAttemptTime):F1}s. Ignoring for 20s.");
                 }
             }
         }
@@ -91,6 +92,11 @@ namespace RebuildBotPlugin.Controllers
                 Vector2 itemCell = new Vector2(item.transform.position.x, item.transform.position.z);
                 Vector2Int itemCellPos = new Vector2Int(Mathf.RoundToInt(itemCell.x), Mathf.RoundToInt(itemCell.y));
                 if (!MapNavMesh.Instance.IsReachable(playerPos, itemCellPos))
+                    continue;
+
+                // Portal avoidance check (do not loot items that dropped inside portal trigger zones)
+                if (BotConfigManager.Current.AvoidPortalsWhileWandering &&
+                    WorldGraph.Instance.IsNearPortal(netManager.CurrentMap, itemCellPos, BotConfigManager.Current.PortalSafetyRadius))
                     continue;
 
                 float dist = Vector2.Distance(playerPos, itemCell);

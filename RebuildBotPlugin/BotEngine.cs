@@ -44,6 +44,7 @@ namespace RebuildBotPlugin
         public ExpTracker ExpTracker { get; } = new ExpTracker();
         public SkillController Skills { get; } = new SkillController();
         public ProgressionController Progression { get; } = new ProgressionController();
+        public LoginController Login { get; } = new LoginController();
 
         private float deathTimestamp = 0f;
         private float lastRespawnTime = 0f;
@@ -91,6 +92,8 @@ namespace RebuildBotPlugin
 
         private void LateUpdate()
         {
+            if (MinimapMarker == null) return;
+
             if (CurrentState != lastLoggedState)
             {
                 LogDebug($"[State] {lastLoggedState} -> {CurrentState}");
@@ -120,6 +123,7 @@ namespace RebuildBotPlugin
                 {
                     Services.NpcInteractionHelper.CleanupNpcUi();
                     Navigation.ResetWander();
+                    Login.Clear();
                     wasBotEnabled = false;
                 }
                 CurrentState = BotState.Disabled;
@@ -127,13 +131,24 @@ namespace RebuildBotPlugin
             }
             wasBotEnabled = true;
 
+            float now = Time.time;
+            var cam = CameraFollower.Instance;
             var netManager = NetworkManager.Instance;
-            if (netManager == null || netManager.EntityList == null ||
-                !netManager.EntityList.TryGetValue(netManager.PlayerId, out var player) || player == null)
+            ServerControllable player = null;
+
+            bool isInGame = cam != null && cam.Target != null && netManager != null &&
+                            netManager.EntityList != null && !string.IsNullOrEmpty(netManager.CurrentMap) &&
+                            netManager.EntityList.TryGetValue(netManager.PlayerId, out player) && player != null;
+
+            if (!isInGame || player == null)
             {
                 CurrentState = BotState.Idle;
+                Login.ProcessLogin(now);
                 return;
             }
+
+            // Successfully in-game - reset reconnect state
+            Login.OnWorldEntered();
 
             // Player Death Handling
             if (player.Hp <= 0 || !player.IsCharacterAlive)
@@ -203,8 +218,6 @@ namespace RebuildBotPlugin
                 int cur = PlayerState.Instance != null ? PlayerState.Instance.Exp : 0;
                 if (max > 0) ExpTracker.UpdateBaseExp(cur, max);
             }
-
-            float now = Time.time;
 
             // Character Auto-Progression (Stat & Skill Point Allocation)
             Progression.ProcessProgression(netManager, player, now);
@@ -305,17 +318,11 @@ namespace RebuildBotPlugin
                         Loot.PendingLootItemId = nearestItem.EntityId;
                         Loot.TrackLootAttempt(nearestItem.EntityId, now);
 
-                        Vector2 itemWorldPos = new Vector2(nearestItem.transform.position.x, nearestItem.transform.position.z);
-                        Vector2Int itemCellPos = new Vector2Int(Mathf.RoundToInt(itemWorldPos.x), Mathf.RoundToInt(itemWorldPos.y));
-                        if (Vector2.Distance(player.CellPosition, itemCellPos) > 1.8f)
-                        {
-                            Navigation.NavigateTowards(player.CellPosition, itemCellPos, avoidPortals: true, hopDistance: 8);
-                        }
-
+                        // Directly dispatch SendPickUpItem - server handles pathing and queued pickup
                         netManager.SendPickUpItem(nearestItem.EntityId);
                         lastLootTime = now;
                         CurrentState = BotState.LootingItem;
-                        LogEvent($"Moving to loot item: {nearestItem.ItemName} (ID: {nearestItem.EntityId})");
+                        LogEvent($"Picking up loot item: {nearestItem.ItemName} (ID: {nearestItem.EntityId})");
                     }
                     return;
                 }

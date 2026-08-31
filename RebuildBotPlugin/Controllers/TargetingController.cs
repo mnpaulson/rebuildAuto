@@ -175,6 +175,11 @@ namespace RebuildBotPlugin.Controllers
                         BotConfigManager.Current.MonsterAvoidanceList.Contains(entity.Name))
                         continue;
 
+                    // Portal avoidance check (do not target monsters standing in/near portals)
+                    if (BotConfigManager.Current.AvoidPortalsWhileWandering &&
+                        WorldGraph.Instance.IsNearPortal(netManager.CurrentMap, entity.CellPosition, BotConfigManager.Current.PortalSafetyRadius))
+                        continue;
+
                     float dist = Vector2.Distance(playerPos, entity.CellPosition);
                     if (dist <= BotConfigManager.Current.SearchRadius)
                     {
@@ -327,6 +332,14 @@ namespace RebuildBotPlugin.Controllers
             if (!MapNavMesh.Instance.IsReachable(currentPos, monsterPos))
                 return false;
 
+            var netManager = NetworkManager.Instance;
+            string currentMap = netManager != null ? netManager.CurrentMap : "";
+            if (BotConfigManager.Current.AvoidPortalsWhileWandering && !string.IsNullOrEmpty(currentMap))
+            {
+                if (WorldGraph.Instance.IsNearPortal(currentMap, monsterPos, BotConfigManager.Current.PortalSafetyRadius))
+                    return false;
+            }
+
             var walkProvider = RoWalkDataProvider.Instance;
             if (walkProvider == null || walkProvider.WalkData == null) return true;
 
@@ -336,6 +349,15 @@ namespace RebuildBotPlugin.Controllers
             Vector2Int attackPos = BotEngine.Instance != null && BotEngine.Instance.Navigation != null
                 ? BotEngine.Instance.Navigation.GetAttackPosition(currentPos, monsterPos, BotConfigManager.Current.AttackRange)
                 : monsterPos;
+
+            if (attackPos == Vector2Int.zero)
+                return false;
+
+            if (BotConfigManager.Current.AvoidPortalsWhileWandering && !string.IsNullOrEmpty(currentMap))
+            {
+                if (WorldGraph.Instance.IsNearPortal(currentMap, attackPos, BotConfigManager.Current.PortalSafetyRadius))
+                    return false;
+            }
 
             // If attackPos is not walkable, probe 8-neighbors of monsterPos for any walkable tile in player's zone
             if (!walkData.CellWalkable(attackPos.x, attackPos.y))

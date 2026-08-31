@@ -64,6 +64,10 @@ namespace RebuildBotPlugin
         public List<RebuildBotPlugin.Models.StatBuildGoal> StatBuildPlan { get; set; } = new List<RebuildBotPlugin.Models.StatBuildGoal>();
         public bool AutoSkillAllocation { get; set; } = true;
         public List<RebuildBotPlugin.Models.SkillBuildGoal> SkillBuildPlan { get; set; } = new List<RebuildBotPlugin.Models.SkillBuildGoal>();
+        public bool AutoReconnect { get; set; } = true;
+        public float AutoReconnectDelaySeconds { get; set; } = 4.0f;
+        public int MaxReconnectAttempts { get; set; } = 10;
+        public int PreferredCharacterSlot { get; set; } = -1;
     }
 
     public static class BotConfigManager

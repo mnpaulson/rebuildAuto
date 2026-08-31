@@ -327,12 +327,13 @@ namespace RebuildBotPlugin
 
                 cursor.Space(3);
 
-                // Row 3 of quick toggles (Progression & Town Routines)
+                // Row 3 of quick toggles (Progression, Town, & Reconnect)
                 Rect rToggles3 = cursor.Next(24);
-                float togW3 = (contentW - 8) / 3f;
+                float togW3 = (contentW - 12) / 4f;
                 ConfigToggle(new Rect(rToggles3.x, rToggles3.y, togW3, 24), "Auto-Stats", () => cfg.AutoStatAllocation, v => cfg.AutoStatAllocation = v);
                 ConfigToggle(new Rect(rToggles3.x + togW3 + 4, rToggles3.y, togW3, 24), "Auto-Skills", () => cfg.AutoSkillAllocation, v => cfg.AutoSkillAllocation = v);
                 ConfigToggle(new Rect(rToggles3.x + (togW3 + 4) * 2, rToggles3.y, togW3, 24), "No-HP Town", () => cfg.AutoReturnOnOutOfHpItems, v => cfg.AutoReturnOnOutOfHpItems = v);
+                ConfigToggle(new Rect(rToggles3.x + (togW3 + 4) * 3, rToggles3.y, togW3, 24), "Reconnect", () => cfg.AutoReconnect, v => cfg.AutoReconnect = v);
             }
 
             cursor.Space(5);
@@ -341,6 +342,11 @@ namespace RebuildBotPlugin
             GUI.Label(cursor.Next(22), "<b>Status Monitor:</b>");
             if (BotEngine.Instance != null)
             {
+                if (BotEngine.Instance.Login != null && BotEngine.Instance.Login.IsActive)
+                {
+                    GUI.Label(cursor.Next(22), $"<color=#00E5FF><b>[Login]:</b> {BotEngine.Instance.Login.StatusText}</color>");
+                }
+
                 Vector2Int pos = BotEngine.Instance.GetPlayerPosition();
                 GUI.Label(cursor.Next(22), $"Map: <b>{BotEngine.Instance.GetCurrentMapName()}</b> | Coordinates: <b>({pos.x}, {pos.y})</b>");
                 GUI.Label(cursor.Next(22), $"Status: <b>{BotEngine.Instance.CurrentState}</b>");

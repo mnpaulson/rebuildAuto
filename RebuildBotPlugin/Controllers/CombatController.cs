@@ -173,7 +173,18 @@ namespace RebuildBotPlugin.Controllers
                 {
                     // Move to the optimal attack tile closest to us
                     Vector2Int attackTile = navigation.GetAttackPosition(player.CellPosition, target.CellPosition, combatRange);
-                    navigation.NavigateTowards(player.CellPosition, attackTile, avoidPortals: false, hopDistance: 8);
+
+                    if (attackTile == Vector2Int.zero ||
+                        (BotConfigManager.Current.AvoidPortalsWhileWandering && WorldGraph.Instance.IsNearPortal(netManager.CurrentMap, attackTile, BotConfigManager.Current.PortalSafetyRadius)))
+                    {
+                        targeting.MarkUnreachable(target.Id, 15.0f);
+                        CurrentLockedTargetId = -1;
+                        lastTargetId = -1;
+                        BotEngine.Instance?.LogEvent($"[Combat] Target {target.Name} (ID: {target.Id}) is inside portal safety zone ({BotConfigManager.Current.PortalSafetyRadius:F0} tiles). Abandoning target to avoid accidental warp.");
+                        return;
+                    }
+
+                    navigation.NavigateTowards(player.CellPosition, attackTile, avoidPortals: BotConfigManager.Current.AvoidPortalsWhileWandering, hopDistance: 8);
                     lastApproachTime = now;
                     nextApproachDelay = UnityEngine.Random.Range(0.18f, 0.32f);
 
