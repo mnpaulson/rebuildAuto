@@ -44,6 +44,10 @@
       <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.AudioModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
       <HintPath>C:\games\RagnarokRebuild\BepInEx\interop\UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>

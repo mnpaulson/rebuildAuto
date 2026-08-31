@@ -26,7 +26,6 @@ namespace RebuildBotPlugin.Controllers
         private float nextTravelDelay = 0.25f;
         private float lastKafraInteractionTime = 0f;
         private int kafraTravelPhase = 0;
-        private float kafraStopDistance = 0f;
 
         private readonly Vector2Int[] tempPath = new Vector2Int[32];
 
@@ -42,7 +41,6 @@ namespace RebuildBotPlugin.Controllers
             waypointAssignedTime = 0f;
             stuckTimer = 0f;
             kafraTravelPhase = 0;
-            kafraStopDistance = 0f;
             Services.NpcInteractionHelper.CleanupNpcUi();
         }
 
@@ -297,7 +295,6 @@ namespace RebuildBotPlugin.Controllers
             if (string.IsNullOrWhiteSpace(destinationMap))
             {
                 kafraTravelPhase = 0;
-                kafraStopDistance = 0f;
                 return false;
             }
 
@@ -310,7 +307,6 @@ namespace RebuildBotPlugin.Controllers
                 if (!targetCellPos.HasValue || MapNavMesh.Instance.IsReachable(player.CellPosition, targetCellPos.Value))
                 {
                     kafraTravelPhase = 0;
-                    kafraStopDistance = 0f;
                     return false;
                 }
             }
@@ -388,28 +384,24 @@ namespace RebuildBotPlugin.Controllers
                     nextHop = bestKafra;
                 }
 
-                if (kafraStopDistance <= 0f)
-                {
-                    kafraStopDistance = UnityEngine.Random.Range(BotConstants.MinStopDistance, BotConstants.MaxStopDistance);
-                }
+                var kafraNpc = Services.NpcInteractionHelper.FindNearbyNpc(netManager, "Kafra", nextHop.FromPos, player.CellPosition);
 
-                float distToKafra = Vector2.Distance(player.CellPosition, nextHop.FromPos);
-
-                // If not in range of Kafra NPC, walk towards her
-                if (distToKafra > kafraStopDistance)
+                // If Kafra is not yet visible in entity list, walk towards her
+                if (kafraNpc == null)
                 {
+                    float distToKafra = Vector2.Distance(player.CellPosition, nextHop.FromPos);
                     if (!player.IsMoving && now - lastTravelTime >= nextTravelDelay)
                     {
                         currentState = BotState.TravelingToTargetMap;
                         NavigateTowards(player.CellPosition, nextHop.FromPos, avoidPortals: false, hopDistance: 11);
                         lastTravelTime = now;
                         nextTravelDelay = UnityEngine.Random.Range(0.20f, 0.38f);
-                        BotEngine.Instance?.LogEvent($"[Travel] Walking towards Kafra for teleport to '{nextHop.DestMap}' (dist: {distToKafra:F1}, stopTarget: {kafraStopDistance:F1}).");
+                        BotEngine.Instance?.LogEvent($"[Travel] Walking towards Kafra for teleport to '{nextHop.DestMap}' (dist: {distToKafra:F1}).");
                     }
                     return true;
                 }
 
-                // In range! Interacting with Kafra NPC
+                // In visual range! Interacting with Kafra NPC
                 currentState = BotState.TravelingToTargetMap;
                 if (kafraTravelPhase == 0)
                 {
@@ -424,21 +416,11 @@ namespace RebuildBotPlugin.Controllers
                         netManager.MovePlayer(player.CellPosition);
                     }
 
-                    var kafraNpc = Services.NpcInteractionHelper.FindNearbyNpc(netManager, "Kafra", nextHop.FromPos);
-                    if (kafraNpc != null)
-                    {
-                        Services.NpcInteractionHelper.CleanupNpcUi();
-                        netManager.SendNpcClick(kafraNpc.Id);
-                        kafraTravelPhase = 1;
-                        lastKafraInteractionTime = now;
-                        BotEngine.Instance?.LogEvent($"[Travel] Clicked Kafra Staff '{kafraNpc.Name}' (ID: {kafraNpc.Id}, Pos: {kafraNpc.CellPosition}, dist: {Vector2.Distance(player.CellPosition, kafraNpc.CellPosition):F1} tiles). Requesting teleport to '{nextHop.DestMap}'.");
-                    }
-                    else if (now - lastKafraInteractionTime > 2.0f)
-                    {
-                        BotEngine.Instance?.LogEvent($"[Travel Warning] Kafra NPC not found within range near ({nextHop.FromPos.x}, {nextHop.FromPos.y}). Moving closer.");
-                        kafraStopDistance = Mathf.Max(1.5f, kafraStopDistance - 1.0f);
-                        lastKafraInteractionTime = now;
-                    }
+                    Services.NpcInteractionHelper.CleanupNpcUi();
+                    netManager.SendNpcClick(kafraNpc.Id);
+                    kafraTravelPhase = 1;
+                    lastKafraInteractionTime = now;
+                    BotEngine.Instance?.LogEvent($"[Travel] Spotted & clicked Kafra '{kafraNpc.Name}' from {Vector2.Distance(player.CellPosition, kafraNpc.CellPosition):F1} tiles away (ID: {kafraNpc.Id}). Requesting teleport to '{nextHop.DestMap}'.");
                 }
                 else
                 {
@@ -544,7 +526,6 @@ namespace RebuildBotPlugin.Controllers
                         {
                             Services.NpcInteractionHelper.CleanupNpcUi();
                             kafraTravelPhase = 0;
-                            kafraStopDistance = 0f;
                             lastKafraInteractionTime = now + 0.5f;
                             BotEngine.Instance?.LogEvent("[Travel] Kafra click timed out without response; cleanly retrying click.");
                         }
@@ -555,7 +536,6 @@ namespace RebuildBotPlugin.Controllers
                         {
                             Services.NpcInteractionHelper.CleanupNpcUi();
                             kafraTravelPhase = 0;
-                            kafraStopDistance = 0f;
                             lastKafraInteractionTime = now + 0.5f;
                             BotEngine.Instance?.LogEvent("[Travel] Kafra destination menu timed out; cleanly retrying interaction.");
                         }
@@ -567,7 +547,6 @@ namespace RebuildBotPlugin.Controllers
                         {
                             Services.NpcInteractionHelper.CleanupNpcUi();
                             kafraTravelPhase = 0;
-                            kafraStopDistance = 0f;
                             BotEngine.Instance?.LogEvent("[Travel] Teleport timed out; retrying Kafra interaction.");
                         }
                     }
@@ -576,7 +555,6 @@ namespace RebuildBotPlugin.Controllers
                         // Entire interaction stalled - cleanly reset UI and interaction locks before re-clicking
                         Services.NpcInteractionHelper.CleanupNpcUi();
                         kafraTravelPhase = 0;
-                        kafraStopDistance = 0f;
                         lastKafraInteractionTime = now + 0.5f;
                         BotEngine.Instance?.LogEvent("[Travel] Kafra interaction stalled; cleanly closed dialogue/portrait and retrying click.");
                     }
@@ -586,7 +564,6 @@ namespace RebuildBotPlugin.Controllers
 
             // Not a Kafra warp: reset kafra state
             kafraTravelPhase = 0;
-            kafraStopDistance = 0f;
 
             // 2. STANDARD PORTAL TRAVEL
             float distToTravelStep = currentTravelStepTarget != Vector2Int.zero

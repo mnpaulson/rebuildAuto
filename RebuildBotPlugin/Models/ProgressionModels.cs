@@ -72,9 +72,26 @@ namespace RebuildBotPlugin.Models
             if (string.IsNullOrWhiteSpace(Skill)) return false;
 
             string s = Skill.Trim();
+            string clean = s.Replace(" ", "").Replace("_", "").Replace("-", "");
+
+            // Common aliases
+            if (clean.Equals("BasicSkill", StringComparison.OrdinalIgnoreCase) ||
+                clean.Equals("BasicMastery", StringComparison.OrdinalIgnoreCase) ||
+                clean.Equals("Basic", StringComparison.OrdinalIgnoreCase))
+            {
+                skill = CharacterSkill.BasicMastery;
+                return true;
+            }
+
+            if (clean.Equals("IncreaseAgi", StringComparison.OrdinalIgnoreCase) ||
+                clean.Equals("IncreaseAgility", StringComparison.OrdinalIgnoreCase))
+            {
+                skill = CharacterSkill.IncreaseAgility;
+                return true;
+            }
 
             // Try parsing enum name directly (e.g., "Bash", "DoubleAttack", "IncreaseHpRecovery")
-            if (Enum.TryParse(s, true, out skill))
+            if (Enum.TryParse(clean, true, out skill))
             {
                 return true;
             }

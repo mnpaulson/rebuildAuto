@@ -1,5 +1,5 @@
 {
-  "Enabled": true,
+  "Enabled": false,
   "AutoAttack": true,
   "AutoLoot": true,
   "AutoWander": true,
@@ -8,7 +8,7 @@
   "AutoAvoidMonsters": true,
   "EmergencyFlyWingOnLowHp": true,
   "EmergencyFlyWingHpPercent": 20,
-  "AutoSitToRecover": false,
+  "AutoSitToRecover": true,
   "SitHpPercent": 30,
   "StandHpPercent": 90,
   "FlyWingCooldownSeconds": 1.5,
@@ -22,7 +22,8 @@
     503,
     512,
     519,
-    516
+    516,
+    569
   ],
   "AutoAspdPotion": true,
   "AspdPotionPreference": "Auto",
@@ -88,19 +89,14 @@
   "AutoReturnOnOutOfHpItems": true,
   "AutoRestock": true,
   "AutoRestockOnLowSupplies": true,
-  "RestockTargets": {
-    "Fly_Wing": 100,
-    "Butterfly_Wing": 5,
-    "Milk": 100,
-    "Awakening_Potion": 3
-  },
+  "RestockTargets": {},
   "SearchRadius": 18,
   "AttackRange": 2,
   "AttackCooldownSeconds": 0.4,
   "LootCooldownSeconds": 0.3,
   "WanderCooldownSeconds": 4,
   "WanderRadius": 8,
-  "TargetMap": "pay_fild02",
+  "TargetMap": "prt_fild08",
   "AutoTravel": true,
   "AvoidPortalsWhileWandering": true,
   "PortalSafetyRadius": 5,
@@ -112,7 +108,8 @@
     "Red Plant",
     "Black Mushroom",
     "Red Mushroom",
-    "Green Plant"
+    "Green Plant",
+    "Creamy"
   ],
   "MonsterAvoidanceList": [
     "Baphomet",
@@ -295,26 +292,42 @@
   "StatBuildPlan": [
     {
       "Stat": "Dex",
-      "Target": 30
-    },
-    {
-      "Stat": "Agi",
-      "Target": 70
+      "Target": 15
     },
     {
       "Stat": "Str",
-      "Target": 50
+      "Target": 20
+    },
+    {
+      "Stat": "Agi",
+      "Target": 20
+    },
+    {
+      "Stat": "Dex",
+      "Target": 20
     }
   ],
   "AutoSkillAllocation": true,
   "SkillBuildPlan": [
     {
       "Skill": "BasicSkill",
-      "Target": 9
+      "Target": 8
+    },
+    {
+      "Skill": "FirstAid",
+      "Target": 1
     }
   ],
   "AutoReconnect": true,
   "AutoReconnectDelaySeconds": 4,
   "MaxReconnectAttempts": 10,
-  "PreferredCharacterSlot": -1
+  "PreferredCharacterSlot": -1,
+  "LowSpecMode": false,
+  "TargetFrameRate": 10,
+  "MuteAudioInLowSpec": true,
+  "DisableRenderingInLowSpec": true,
+  "AutoJobChange": true,
+  "TargetJob": "Swordman",
+  "AutoClaimBardGifts": true,
+  "AutoEquipEmptySlots": true
 }

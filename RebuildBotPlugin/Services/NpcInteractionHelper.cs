@@ -12,7 +12,7 @@ namespace RebuildBotPlugin.Services
     /// <summary>
     /// Generic NPC interaction state machine that encapsulates the
     /// click→dialog→option→action pattern shared across vendor buy/sell,
-    /// Kafra storage, and Kafra teleport interactions.
+    /// Kafra storage, Adventuring Bard, and quest interactions.
     /// </summary>
     public class NpcInteractionHelper
     {
@@ -35,32 +35,29 @@ namespace RebuildBotPlugin.Services
         private float lastActionTime;
         private float interactionStartTime;
         private int clickedNpcId = -1;
+        private string lastSeenDialogText = "";
 
-        // Timing constants
-        private const float NpcInteractionRange = 6.0f;
-        private const float MinStopDistance = 2.2f;
-        private const float MaxStopDistance = 6.0f;
-        private const float DialogAdvanceDelay = 0.75f;
-        private const float OptionSelectDelay = 0.65f;
-        private const float StallTimeoutSeconds = 5.0f;
+        public const float MaxNpcVisualRange = 22.0f;
+        public const float NpcLocationAnchorRadius = 10.0f;
+        private const float DialogAdvanceDelay = 0.7f;
+        private const float OptionSelectDelay = 0.5f;
+        private const float StallTimeoutSeconds = 10.0f;
         private const float NpcSearchTimeoutSeconds = 3.0f;
 
         /// <summary>
         /// Begin a new NPC interaction. Navigates to the NPC, clicks it, and
         /// advances dialog until the option menu or action callback is ready.
         /// </summary>
-        /// <param name="nameHint">Substring to match against NPC names (e.g., "Vendor", "Kafra", "Alchemist")</param>
-        /// <param name="position">Expected NPC cell position</param>
-        /// <param name="customStopDistance">Custom stop distance; 0 for random</param>
         public void Begin(string nameHint, Vector2Int position, float customStopDistance = 0f)
         {
             npcNameHint = nameHint;
             npcPosition = position;
-            stopDistance = customStopDistance > 0f ? customStopDistance : UnityEngine.Random.Range(MinStopDistance, MaxStopDistance);
+            stopDistance = customStopDistance > 0f ? customStopDistance : MaxNpcVisualRange;
             CurrentPhase = Phase.NavigatingToNpc;
             lastActionTime = Time.time;
             interactionStartTime = Time.time;
             clickedNpcId = -1;
+            lastSeenDialogText = "";
         }
 
         /// <summary>
@@ -71,24 +68,12 @@ namespace RebuildBotPlugin.Services
             CurrentPhase = Phase.Idle;
             clickedNpcId = -1;
             npcNameHint = null;
+            lastSeenDialogText = "";
         }
 
         /// <summary>
         /// Tick the NPC navigation + click state machine.
         /// Returns true if the interaction is still in progress.
-        ///
-        /// Once the NPC has been clicked and dialog/options appear, this method
-        /// calls the provided callbacks to handle the interaction-specific logic.
-        ///
-        /// <paramref name="onOptionMenu"/> is called when an NPC option panel is open.
-        /// Return true if you handled the option, false to keep waiting.
-        ///
-        /// <paramref name="onDialogOpen"/> is called when a dialog panel is open (no options).
-        /// Return true if you handled it (e.g., advanced dialog), false to auto-advance.
-        ///
-        /// <paramref name="onNoUiVisible"/> is called after clicking the NPC when neither
-        /// dialog nor options are visible. This handles shop UIs that appear without
-        /// dialog (e.g., buy/sell panels). Return true if interaction is complete.
         /// </summary>
         public bool Process(
             NetworkManager netManager,
@@ -118,15 +103,21 @@ namespace RebuildBotPlugin.Services
 
         private bool ProcessNavigation(NetworkManager netManager, ServerControllable player, NavigationController navigation, float now)
         {
-            float dist = Vector2.Distance(player.CellPosition, npcPosition);
-
-            if (dist <= stopDistance)
+            // Opportunistic click: As soon as the NPC enters visual / entity range (up to 22 tiles), click it immediately!
+            var npc = FindNearbyNpc(netManager, npcNameHint, npcPosition, player.CellPosition);
+            if (npc != null)
             {
-                CurrentPhase = Phase.WaitingToClick;
-                lastActionTime = now;
+                netManager.SendNpcClick(npc.Id);
+                clickedNpcId = npc.Id;
+                CurrentPhase = Phase.WaitingForResponse;
+                lastActionTime = now + 0.6f;
+                lastSeenDialogText = "";
+                float dist = Vector2.Distance(player.CellPosition, npc.CellPosition);
+                BotEngine.Instance?.LogEvent($"[NPC] Spotted & clicked '{npc.Name}' from {dist:F1} tiles away (ID: {npc.Id}).");
                 return true;
             }
 
+            // If not yet visible in entity list, walk towards known location
             if (!player.IsMoving && now - lastActionTime >= 0.3f)
             {
                 navigation.NavigateTowards(player.CellPosition, npcPosition, avoidPortals: false, hopDistance: 11);
@@ -138,25 +129,24 @@ namespace RebuildBotPlugin.Services
 
         private bool ProcessClick(NetworkManager netManager, ServerControllable player, float now)
         {
-            var npc = FindNearbyNpc(netManager, npcNameHint, npcPosition);
+            var npc = FindNearbyNpc(netManager, npcNameHint, npcPosition, player.CellPosition);
 
             if (npc != null)
             {
                 netManager.SendNpcClick(npc.Id);
                 clickedNpcId = npc.Id;
                 CurrentPhase = Phase.WaitingForResponse;
-                lastActionTime = now + UnityEngine.Random.Range(0.6f, 0.9f);
+                lastActionTime = now + 0.6f;
+                lastSeenDialogText = "";
                 BotEngine.Instance?.LogEvent($"[NPC] Clicked '{npc.Name}' (ID: {npc.Id}, dist: {Vector2.Distance(player.CellPosition, npc.CellPosition):F1} tiles).");
                 return true;
             }
 
             if (now - lastActionTime > NpcSearchTimeoutSeconds)
             {
-                // NPC not found — move closer and retry
-                stopDistance = Math.Max(1.5f, stopDistance - 1.0f);
                 CurrentPhase = Phase.NavigatingToNpc;
                 lastActionTime = now;
-                BotEngine.Instance?.LogDebug($"[NPC] '{npcNameHint}' not found within range near ({npcPosition.x}, {npcPosition.y}). Moving closer (stopDist: {stopDistance:F1}).");
+                BotEngine.Instance?.LogDebug($"[NPC] '{npcNameHint}' not found near ({npcPosition.x}, {npcPosition.y}). Moving closer.");
             }
 
             return true;
@@ -177,6 +167,7 @@ namespace RebuildBotPlugin.Services
             // 1. Option menu is open — delegate to caller
             if (optionOpen)
             {
+                lastSeenDialogText = "";
                 if (now - lastActionTime < OptionSelectDelay) return true;
 
                 if (onOptionMenu != null)
@@ -186,7 +177,7 @@ namespace RebuildBotPlugin.Services
                     {
                         if (onOptionMenu(buttons))
                         {
-                            lastActionTime = now + UnityEngine.Random.Range(0.4f, 0.7f);
+                            lastActionTime = now + 0.5f;
                             return true;
                         }
                     }
@@ -195,33 +186,50 @@ namespace RebuildBotPlugin.Services
                 return true;
             }
 
-            // 2. Dialog panel open (no options) — advance or delegate
+            // 2. Dialog panel open (no options) — advance with human-like pacing
             if (dialogOpen)
             {
+                var dialogWindow = cam.DialogPanel.GetComponent<DialogWindow>();
+                string currentText = (dialogWindow != null && dialogWindow.TextBox != null) ? dialogWindow.TextBox.text : "";
+                string currentSpeaker = (dialogWindow != null && dialogWindow.NameBox != null) ? dialogWindow.NameBox.text : "";
+
+                // Detect new incoming dialogue text from server
+                if (currentText != lastSeenDialogText)
+                {
+                    lastSeenDialogText = currentText;
+                    lastActionTime = now;
+                    if (!string.IsNullOrWhiteSpace(currentText))
+                    {
+                        BotEngine.Instance?.LogEvent($"[NPC Dialog] {currentSpeaker} {currentText}");
+                    }
+                    return true;
+                }
+
+                // If caller provided a custom dialog handler, allow it to run
                 if (onDialogOpen != null && onDialogOpen())
                 {
                     lastActionTime = now;
                     return true;
                 }
 
-                // Default: auto-advance dialog
+                // Paced auto-advance
                 if (now - lastActionTime >= DialogAdvanceDelay)
                 {
                     netManager.SendNpcAdvance();
                     lastActionTime = now;
-                    BotEngine.Instance?.LogDebug("[NPC] Auto-advanced dialog prompt.");
+                    BotEngine.Instance?.LogEvent("[NPC] Clicked / Advanced dialogue prompt.");
                 }
 
                 return true;
             }
 
-            // 3. No UI visible — either shop opened or interaction timed out
+            // 3. No UI visible — either shop opened or interaction finished
             if (onNoUiVisible != null && onNoUiVisible())
             {
                 return true;
             }
 
-            // Stall timeout — reset and retry
+            // Stall timeout — reset and retry if no UI appeared
             if (now - lastActionTime >= StallTimeoutSeconds)
             {
                 CleanupNpcUi();
@@ -235,7 +243,6 @@ namespace RebuildBotPlugin.Services
 
         /// <summary>
         /// Mark the interaction as completed.
-        /// Call this from your onOptionMenu/onNoUiVisible callback when done.
         /// </summary>
         public void Complete()
         {
@@ -252,21 +259,28 @@ namespace RebuildBotPlugin.Services
 
         /// <summary>
         /// Find the nearest NPC matching a name substring near an expected position.
+        /// Searches across full client visual/spawn range (up to 22 tiles from player).
         /// </summary>
-        public static ServerControllable FindNearbyNpc(NetworkManager netManager, string nameSubstr, Vector2Int expectedPos)
+        public static ServerControllable FindNearbyNpc(NetworkManager netManager, string nameSubstr, Vector2Int expectedPos, Vector2Int? playerPos = null)
         {
             if (netManager == null || netManager.EntityList == null) return null;
 
             ServerControllable bestNpc = null;
             float bestDist = float.MaxValue;
+            Vector2 origin = playerPos.HasValue ? (Vector2)playerPos.Value : (Vector2)expectedPos;
 
             foreach (var kvp in netManager.EntityList)
             {
                 var entity = kvp.Value;
                 if (entity == null || entity.CharacterType != CharacterType.NPC) continue;
 
-                float dist = Vector2.Distance(entity.CellPosition, expectedPos);
-                if (dist <= NpcInteractionRange)
+                // Ensure NPC is near its known spawn anchor (within 10 tiles of expectedPos)
+                float anchorDist = Vector2.Distance(entity.CellPosition, expectedPos);
+                if (anchorDist > NpcLocationAnchorRadius) continue;
+
+                // Measure distance to origin
+                float dist = Vector2.Distance(entity.CellPosition, origin);
+                if (dist <= MaxNpcVisualRange)
                 {
                     bool nameMatches = string.IsNullOrEmpty(nameSubstr) ||
                                        (!string.IsNullOrEmpty(entity.Name) && entity.Name.IndexOf(nameSubstr, StringComparison.OrdinalIgnoreCase) >= 0);
@@ -278,6 +292,57 @@ namespace RebuildBotPlugin.Services
                 }
             }
             return bestNpc;
+        }
+
+        private static string globalLastSeenDialogText = "";
+        private static float globalLastDialogAdvanceTime = 0f;
+
+        /// <summary>
+        /// Universal dialog auto-advancer. If ANY NPC dialog window is open on screen
+        /// without an open option window, paces and advances through the text.
+        /// Returns true if a dialog window was open and processed (blocking other actions).
+        /// </summary>
+        public static bool ProcessActiveDialog(NetworkManager netManager, float now)
+        {
+            if (netManager == null) return false;
+
+            var cam = CameraFollower.Instance;
+            if (cam == null || cam.DialogPanel == null || !cam.DialogPanel.activeSelf)
+            {
+                globalLastSeenDialogText = "";
+                return false;
+            }
+
+            // If an option menu is also open, let the option handler handle it
+            if (cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf)
+            {
+                globalLastSeenDialogText = "";
+                return false;
+            }
+
+            var dialogWindow = cam.DialogPanel.GetComponent<DialogWindow>();
+            string currentText = (dialogWindow != null && dialogWindow.TextBox != null) ? dialogWindow.TextBox.text : "";
+            string currentSpeaker = (dialogWindow != null && dialogWindow.NameBox != null) ? dialogWindow.NameBox.text : "";
+
+            if (currentText != globalLastSeenDialogText)
+            {
+                globalLastSeenDialogText = currentText;
+                globalLastDialogAdvanceTime = now;
+                if (!string.IsNullOrWhiteSpace(currentText))
+                {
+                    BotEngine.Instance?.LogEvent($"[NPC Dialog] {currentSpeaker} {currentText}");
+                }
+                return true;
+            }
+
+            if (now - globalLastDialogAdvanceTime >= DialogAdvanceDelay)
+            {
+                netManager.SendNpcAdvance();
+                globalLastDialogAdvanceTime = now;
+                BotEngine.Instance?.LogEvent("[NPC] Clicked / Advanced dialogue prompt.");
+            }
+
+            return true;
         }
 
         /// <summary>

@@ -6,6 +6,7 @@ using Assets.Scripts.Network;
 using Assets.Scripts.PlayerControl;
 using Assets.Scripts.Sprites;
 using RebuildBotPlugin.Controllers;
+using RebuildBotPlugin.Services;
 using UnityEngine;
 
 namespace RebuildBotPlugin
@@ -45,6 +46,9 @@ namespace RebuildBotPlugin
         public SkillController Skills { get; } = new SkillController();
         public ProgressionController Progression { get; } = new ProgressionController();
         public LoginController Login { get; } = new LoginController();
+        public LowSpecController LowSpec { get; } = new LowSpecController();
+        public JobChangeController JobChange { get; } = new JobChangeController();
+        public EquipmentController Equipment { get; } = new EquipmentController();
 
         private float deathTimestamp = 0f;
         private float lastRespawnTime = 0f;
@@ -118,6 +122,9 @@ namespace RebuildBotPlugin
 
         private void Update()
         {
+            float now = Time.time;
+            LowSpec.Update(now);
+
             if (!BotConfigManager.Current.Enabled)
             {
                 if (wasBotEnabled)
@@ -133,7 +140,6 @@ namespace RebuildBotPlugin
             }
             wasBotEnabled = true;
 
-            float now = Time.time;
             var cam = CameraFollower.Instance;
             var netManager = NetworkManager.Instance;
             ServerControllable player = null;
@@ -224,6 +230,9 @@ namespace RebuildBotPlugin
             // Character Auto-Progression (Stat & Skill Point Allocation)
             Progression.ProcessProgression(netManager, player, now);
 
+            // Auto-Equip Empty Slots ("Finders Keepers" Gear)
+            Equipment.ProcessAutoEquip(netManager, player, now);
+
             // Cleanup temporary loot blacklists
             Loot.CleanupLootAttempts(now);
 
@@ -287,10 +296,52 @@ namespace RebuildBotPlugin
                 Combat.OnTargetDefeated();
             }
 
+            // PRIORITY 3.4: ACTIVE NPC DIALOG WATCHER (Automatically pace & advance any open dialogs)
+            if (NpcInteractionHelper.ProcessActiveDialog(netManager, now))
+            {
+                return;
+            }
+
             // PRIORITY 3.5: TOWN ROUTINE (Return to base, sell, and store when overweight)
             if (TownRoutine.ProcessTownRoutine(netManager, player, Navigation, now))
             {
                 return;
+            }
+
+            // PRIORITY 3.7: JOB CHANGE & STARTER GIFT (Adventuring Bard at Base)
+            if (BotConfigManager.Current.AutoClaimBardGifts && JobChange.NeedsStarterGift(player))
+            {
+                if (string.Equals(netManager.CurrentMap, JobChangeController.BardMap, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!JobChange.IsActive)
+                    {
+                        JobChange.StartClaimStarterGift("New character starter funds");
+                    }
+                    if (JobChange.ProcessJobChange(netManager, player, Navigation, now))
+                    {
+                        return;
+                    }
+                }
+            }
+            else if (BotConfigManager.Current.AutoJobChange && JobChangeController.IsEligibleForJobChange(player))
+            {
+                if (string.Equals(netManager.CurrentMap, JobChangeController.BardMap, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!JobChange.IsActive)
+                    {
+                        JobChange.StartJobChange("Eligible for 1st Job promotion at base");
+                    }
+                    if (JobChange.ProcessJobChange(netManager, player, Navigation, now))
+                    {
+                        return;
+                    }
+                }
+                else if (!TownRoutine.IsActive)
+                {
+                    // Not in base map, initiate return to base to visit the Bard
+                    TownRoutine.StartRoutine("Return to base for 1st Job promotion");
+                    return;
+                }
             }
 
             // PRIORITY 4: CROSS-MAP TRAVEL TO TARGET MAP (AutoTravel)

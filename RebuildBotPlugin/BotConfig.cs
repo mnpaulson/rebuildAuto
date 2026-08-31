@@ -68,6 +68,14 @@ namespace RebuildBotPlugin
         public float AutoReconnectDelaySeconds { get; set; } = 4.0f;
         public int MaxReconnectAttempts { get; set; } = 10;
         public int PreferredCharacterSlot { get; set; } = -1;
+        public bool LowSpecMode { get; set; } = false;
+        public int TargetFrameRate { get; set; } = 10;
+        public bool MuteAudioInLowSpec { get; set; } = true;
+        public bool DisableRenderingInLowSpec { get; set; } = true;
+        public bool AutoJobChange { get; set; } = true;
+        public string TargetJob { get; set; } = "Swordman";
+        public bool AutoClaimBardGifts { get; set; } = true;
+        public bool AutoEquipEmptySlots { get; set; } = true;
     }
 
     public static class BotConfigManager

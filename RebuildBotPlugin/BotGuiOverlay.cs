@@ -75,6 +75,10 @@ namespace RebuildBotPlugin
                 BotConfigManager.SaveConfig();
                 BotEngine.Instance?.LogEvent($"Bot master toggle switched: {(BotConfigManager.Current.Enabled ? "ENABLED" : "DISABLED")}");
             }
+            if (Input.GetKeyDown(KeyCode.F8))
+            {
+                BotEngine.Instance?.LowSpec.Toggle();
+            }
             if (Input.GetKeyDown(KeyCode.F5))
             {
                 BotConfigManager.LoadConfig();
@@ -258,11 +262,11 @@ namespace RebuildBotPlugin
             }
 
             // Adjust window height dynamically based on expanded sections with comfortable padding
-            float targetHeight = 320 + (showQuickToggles ? 98 : 0) + (showHeatmapMonitor ? 205 : 0) + (showConfigHelpers ? 305 : 0);
+            float targetHeight = 345 + (showQuickToggles ? 128 : 0) + (showHeatmapMonitor ? 205 : 0) + (showConfigHelpers ? 305 : 0);
             windowRect.height = targetHeight;
 
             // Draw main window background box
-            GUI.Box(windowRect, "<b>Rebuild Automation Bot</b> (F9: Hide | F10: Toggle)");
+            GUI.Box(windowRect, "<b>Rebuild Automation Bot</b> (F9: Hide | F10: Bot | F8: Low-Spec)");
 
             // Close button (X) in top right
             if (CustomButton(new Rect(windowRect.x + windowRect.width - 24, windowRect.y + 3, 20, 18), "X"))
@@ -334,6 +338,19 @@ namespace RebuildBotPlugin
                 ConfigToggle(new Rect(rToggles3.x + togW3 + 4, rToggles3.y, togW3, 24), "Auto-Skills", () => cfg.AutoSkillAllocation, v => cfg.AutoSkillAllocation = v);
                 ConfigToggle(new Rect(rToggles3.x + (togW3 + 4) * 2, rToggles3.y, togW3, 24), "No-HP Town", () => cfg.AutoReturnOnOutOfHpItems, v => cfg.AutoReturnOnOutOfHpItems = v);
                 ConfigToggle(new Rect(rToggles3.x + (togW3 + 4) * 3, rToggles3.y, togW3, 24), "Reconnect", () => cfg.AutoReconnect, v => cfg.AutoReconnect = v);
+
+                cursor.Space(3);
+
+                // Row 4 of quick toggles (Low-Spec, Job Change, & Auto-Equip)
+                Rect rToggles4 = cursor.Next(24);
+                float togW4 = (contentW - 8) / 3f;
+                bool curLowSpec = cfg.LowSpecMode;
+                if (ConfigToggle(new Rect(rToggles4.x, rToggles4.y, togW4, 24), $"Low-Spec (F8)", () => cfg.LowSpecMode, v => { cfg.LowSpecMode = v; BotEngine.Instance?.LowSpec.ApplyState(v); }) != curLowSpec)
+                {
+                    BotConfigManager.SaveConfig();
+                }
+                ConfigToggle(new Rect(rToggles4.x + togW4 + 4, rToggles4.y, togW4, 24), $"Auto-Job", () => cfg.AutoJobChange, v => cfg.AutoJobChange = v);
+                ConfigToggle(new Rect(rToggles4.x + (togW4 + 4) * 2, rToggles4.y, togW4, 24), $"Auto-Equip", () => cfg.AutoEquipEmptySlots, v => cfg.AutoEquipEmptySlots = v);
             }
 
             cursor.Space(5);
@@ -346,6 +363,15 @@ namespace RebuildBotPlugin
                 {
                     GUI.Label(cursor.Next(22), $"<color=#00E5FF><b>[Login]:</b> {BotEngine.Instance.Login.StatusText}</color>");
                 }
+
+                if (BotEngine.Instance.JobChange != null && BotEngine.Instance.JobChange.IsActive)
+                {
+                    GUI.Label(cursor.Next(22), $"<color=#FFD700><b>[Job Change]:</b> {BotEngine.Instance.JobChange.CurrentState}</color>");
+                }
+
+                float fps = BotEngine.Instance.LowSpec?.CurrentCalculatedFps ?? 0f;
+                string modeStr = BotConfigManager.Current.LowSpecMode ? "<color=#00E5FF><b>Low-Spec (5-10 FPS)</b></color>" : "<color=#88FF88><b>Normal</b></color>";
+                GUI.Label(cursor.Next(22), $"Performance: <b>{fps:F0} FPS</b> | Mode: {modeStr}");
 
                 Vector2Int pos = BotEngine.Instance.GetPlayerPosition();
                 GUI.Label(cursor.Next(22), $"Map: <b>{BotEngine.Instance.GetCurrentMapName()}</b> | Coordinates: <b>({pos.x}, {pos.y})</b>");

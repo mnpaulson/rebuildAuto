@@ -248,9 +248,20 @@ namespace RebuildBotPlugin.Controllers
                    GetItemsToPurchaseFromVendor(RestockVendorType.AlchemistVendor).Count > 0;
         }
 
+        public const float RoutineCooldownSeconds = 45.0f;
+
         public static bool HasDepletedHpItems()
         {
             if (!BotConfigManager.Current.AutoReturnOnOutOfHpItems)
+                return false;
+
+            var netManager = NetworkManager.Instance;
+            if (netManager != null && IsTownMap(netManager.CurrentMap))
+                return false;
+
+            // Don't trigger if broke and no loot to sell (rely on AutoSitToRecover instead)
+            var state = PlayerState.Instance;
+            if ((state == null || state.Zeny < 50) && !HasItemsToSell())
                 return false;
 
             var hpItemIds = BotConfigManager.Current.HpPotionItemIds;
@@ -276,6 +287,19 @@ namespace RebuildBotPlugin.Controllers
         {
             if (!BotConfigManager.Current.AutoRestock || !BotConfigManager.Current.AutoRestockOnLowSupplies || BotConfigManager.Current.RestockTargets == null)
                 return false;
+
+            // Don't trigger if broke and no loot to sell
+            var state = PlayerState.Instance;
+            if ((state == null || state.Zeny < 50) && !HasItemsToSell())
+                return false;
+
+            // If hunting on base map and out of supplies, don't trigger unless we can afford and need them
+            var netManager = NetworkManager.Instance;
+            if (netManager != null && string.Equals(netManager.CurrentMap, BaseMap, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(BotConfigManager.Current.TargetMap, BaseMap, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!HasSuppliesNeeded()) return false;
+            }
 
             InventoryHelper.TryGetInventoryData(out var inv);
 
@@ -360,6 +384,10 @@ namespace RebuildBotPlugin.Controllers
         {
             if (currentState == TownRoutineState.Idle)
             {
+                // Mandatory cooldown after completing a routine to prevent rapid re-trigger loops
+                if (now - lastCompletedTime < RoutineCooldownSeconds)
+                    return false;
+
                 // Defer starting town routine if currently looting
                 if (BotEngine.Instance != null && BotEngine.Instance.Loot != null)
                 {
@@ -532,15 +560,21 @@ namespace RebuildBotPlugin.Controllers
 
         private bool ProcessNavigationToTarget(ServerControllable player, NavigationController navigation, Vector2Int targetPos, TownRoutineState nextState, string targetName, float now)
         {
-            if (targetStopDistance <= 0f) targetStopDistance = UnityEngine.Random.Range(BotConstants.MinStopDistance, BotConstants.MaxStopDistance);
-            float dist = Vector2.Distance(player.CellPosition, targetPos);
-            if (dist <= targetStopDistance)
+            var netManager = NetworkManager.Instance;
+
+            // Opportunistic visual range interaction: If on base town map and NPC is visible in entity list, interact immediately!
+            if (netManager != null && string.Equals(netManager.CurrentMap, BaseMap, StringComparison.OrdinalIgnoreCase))
             {
-                currentState = nextState;
-                stepPhase = 0;
-                lastActionTime = now;
-                BotEngine.Instance?.LogEvent($"[Town Routine] Reached {targetName} (dist: {dist:F1} tiles). Opening interaction.");
-                return true;
+                var npc = NpcInteractionHelper.FindNearbyNpc(netManager, targetName, targetPos, player.CellPosition);
+                if (npc != null)
+                {
+                    float visualDist = Vector2.Distance(player.CellPosition, npc.CellPosition);
+                    currentState = nextState;
+                    stepPhase = 0;
+                    lastActionTime = now;
+                    BotEngine.Instance?.LogEvent($"[Town Routine] Spotted {targetName} from {visualDist:F1} tiles away. Opening interaction.");
+                    return true;
+                }
             }
 
             if (!MapNavMesh.Instance.IsReachable(player.CellPosition, targetPos))
