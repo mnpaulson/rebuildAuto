@@ -151,6 +151,25 @@ namespace RebuildBotPlugin.Controllers
                     {
                         if (now - lastStateChangeTime >= 0.5f)
                         {
+                            string targetProfile = !string.IsNullOrEmpty(Services.ProfileManager.ActiveProfileName)
+                                ? Services.ProfileManager.ActiveProfileName
+                                : Services.ProfileManager.ExplicitCliProfile;
+
+                            if (!string.IsNullOrEmpty(targetProfile) &&
+                                Services.AccountManager.TryGetCredentialsForProfile(targetProfile, out string username, out string password, out _, out _))
+                            {
+                                if (titleScreen.LoginBox.UsernameBox != null) titleScreen.LoginBox.UsernameBox.text = username;
+                                if (titleScreen.LoginBox.PasswordBox != null) titleScreen.LoginBox.PasswordBox.text = password;
+                                BotEngine.Instance?.LogEvent($"[Login] Using account credentials for profile '{targetProfile}' (User: '{username}')...");
+                            }
+                            else if (!string.IsNullOrEmpty(Services.ProfileManager.ExplicitCliAccount) &&
+                                     Services.AccountManager.TryGetCredentialsForAccount(Services.ProfileManager.ExplicitCliAccount, out string accUser, out string accPass))
+                            {
+                                if (titleScreen.LoginBox.UsernameBox != null) titleScreen.LoginBox.UsernameBox.text = accUser;
+                                if (titleScreen.LoginBox.PasswordBox != null) titleScreen.LoginBox.PasswordBox.text = accPass;
+                                BotEngine.Instance?.LogEvent($"[Login] Using account credentials for account '{Services.ProfileManager.ExplicitCliAccount}' (User: '{accUser}')...");
+                            }
+
                             BotEngine.Instance?.LogEvent($"[Login] Attempting account authentication (Attempt {CurrentAttempt})...");
                             titleScreen.LoginBox.AttemptLogin();
                             State = LoginState.AwaitingCharacterSelect;
@@ -215,12 +234,26 @@ namespace RebuildBotPlugin.Controllers
                         if (now - lastStateChangeTime >= 0.6f)
                         {
                             int targetSlot = BotConfigManager.Current.PreferredCharacterSlot;
+                            string targetProfile = !string.IsNullOrEmpty(Services.ProfileManager.ActiveProfileName)
+                                ? Services.ProfileManager.ActiveProfileName
+                                : Services.ProfileManager.ExplicitCliProfile;
+
+                            if (!string.IsNullOrEmpty(targetProfile) &&
+                                Services.AccountManager.TryGetCredentialsForProfile(targetProfile, out _, out _, out int credSlot, out string charName))
+                            {
+                                targetSlot = credSlot;
+                                if (!string.IsNullOrEmpty(charName))
+                                {
+                                    BotEngine.Instance?.LogEvent($"[Login] Selected profile '{targetProfile}' target character '{charName}' (Slot {targetSlot}).");
+                                }
+                            }
+
                             if (targetSlot >= 0 && targetSlot < titleScreen.CharacterSelectWindow.CharacterSlots.Count)
                             {
                                 titleScreen.CharacterSelectWindow.SetCharacterInfo(targetSlot);
                             }
 
-                            BotEngine.Instance?.LogEvent($"[Login] Entering world with selected character slot...");
+                            BotEngine.Instance?.LogEvent($"[Login] Entering world with selected character slot ({targetSlot})...");
                             titleScreen.CharacterSelectWindow.ClickOk();
                             State = LoginState.AwaitingWorldEntry;
                             lastStateChangeTime = now;

@@ -21,6 +21,16 @@ A client automation and quality-of-life plugin for **RagnarokRebuild**, designed
   - Built-in Dijkstra pathfinding: automatically calculates multi-map routes to reach `TargetMap`.
   - **Portal Safety**: Avoids wandering into portals when exploring (`AvoidPortalsWhileWandering`).
 - 🧪 **Auto-Potion**: Consumes configured HP potions when below threshold percentage.
+- 🚀 **Multi-Bot & Profile Isolation**:
+  - Run multiple client instances concurrently with separate configurations and macro queues.
+  - Multi-account auto-login credentials via `accounts.json`.
+  - Profile directories: `profiles/<CharacterName>/bot_config.json`, `bot_macro.json`, `macro_status.json`.
+- ⚡ **Low-Spec Mode ("Headless-Lite")**:
+  - Sets camera culling mask to 0 (0% 3D GPU render), mutes audio, and caps framerate to 5–10 FPS for massive multi-client scalability.
+- 🎯 **Discrete Macro Action System**:
+  - Execute one-time high-priority tasks (e.g. `UpgradeItem`, `BuyItem`, `EquipItem`, `SlotCard`, `TravelToMap`).
+  - Full Blacksmith refinement pipeline with Zeny/ore pre-checks and Hollgrehenn interaction.
+  - Exports structured status to `macro_status.json` for LLM Orchestrator integration.
 - 🛡️ **Zero-Passthrough IMGUI**:
   - In-game compact GUI overlay with live player coordinates, target HP, and status.
   - Harmony hooks prevent mouse clicks on the overlay from passing through into character movement.
@@ -33,20 +43,98 @@ A client automation and quality-of-life plugin for **RagnarokRebuild**, designed
 
 | Hotkey | Action |
 | :--- | :--- |
+| **`F8`** | Toggle Low-Spec Mode (0% GPU render, FPS cap, audio mute) |
 | **`F9`** | Show / Hide in-game Bot GUI Overlay window |
 | **`F10`** | Master Toggle (Enable / Disable Automation Bot) |
-| **`F5`** | Hot-Reload `bot_config.json` configuration from disk |
+| **`F5`** | Hot-Reload active `bot_config.json` configuration from disk |
+
+---
+
+## Multi-Bot & Command Line Launcher
+
+Run multiple bots independently using CLI launch arguments:
+
+```cmd
+:: Launch specific character profile
+RebuildClient.exe -profile "Test-Sword"
+
+:: Launch second bot in low-spec mode at 10 FPS
+RebuildClient.exe -profile "Test-Archer" -lowspec -fps 10
+```
+
+### Supported CLI Arguments:
+| Argument | Description | Example |
+| :--- | :--- | :--- |
+| `-profile "<Name>"` | Sets active character profile directory | `-profile "Test-Sword"` |
+| `-character "<Name>"` | Alias for `-profile` | `-character "Test-Archer"` |
+| `-account "<Id>"` | Selects account from `accounts.json` by ID | `-account "account_1"` |
+| `-lowspec` | Starts client in Low-Spec mode (0% GPU) | `-lowspec` |
+| `-fps <int>` | Overrides framerate cap | `-fps 10` |
+
+### Profile Directory Structure:
+```
+profiles/
+├── Test-Sword/
+│   ├── bot_config.json      <-- Character configuration
+│   ├── bot_macro.json       <-- Action queue for Swordsman
+│   └── macro_status.json    <-- Real-time status & history
+└── Test-Archer/
+    ├── bot_config.json
+    ├── bot_macro.json
+    └── macro_status.json
+```
+
+### Shared Credentials (`accounts.json`):
+```json
+{
+  "Accounts": [
+    {
+      "AccountId": "account_1",
+      "Username": "bot_user_01",
+      "Password": "password123",
+      "Characters": [
+        { "Name": "Test-Sword", "Slot": 0 }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## Discrete Macro System (`bot_macro.json`)
+
+Queue one-time actions for any bot:
+```json
+{
+  "Commands": [
+    {
+      "ActionType": "UpgradeItem",
+      "ItemName": "Sword",
+      "TargetRefineLevel": 3,
+      "StopAtSafeLimit": true
+    }
+  ]
+}
+```
+Supported Actions: `UpgradeItem`, `BuyItem`, `EquipItem`, `UnequipItem`, `SlotCard`, `UseItem`, `TravelToMap`.
 
 ---
 
 ## Building & Deploying
 
-### Method 1: Using `deploy.bat` (Recommended)
+### Method 1: Using `launch.bat` (Interactive Profile Launcher)
+Builds Release DLL, deploys files, presents an interactive numbered profile selector, and launches the game:
+```bat
+.\launch.bat
+```
+
+### Method 2: Using `deploy.bat`
 From the workspace root, run the deployment batch script:
 ```bat
 .\deploy.bat           :: Builds Release DLL, checks if client is running, deploys to game folder
 .\deploy.bat /copy     :: Deploys existing binary without rebuilding
-.\deploy.bat /config   :: Force-syncs workspace bot_config.json to game folder
+.\deploy.bat /config   :: Force-syncs workspace bot_config.json & accounts.json to game folder
 .\deploy.bat /run      :: Builds, deploys, and launches RebuildClient.exe automatically
 ```
 

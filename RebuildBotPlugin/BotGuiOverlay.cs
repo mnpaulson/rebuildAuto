@@ -12,7 +12,7 @@ namespace RebuildBotPlugin
         public static bool IsMouseOverOverlay = false;
 
         public bool IsVisible = true;
-        private bool showQuickToggles = true;
+        private bool showQuickToggles = false;
         private bool showConfigHelpers = false;
         private bool showHeatmapMonitor = false;
         private Texture2D heatmapGridTex = null;
@@ -21,8 +21,8 @@ namespace RebuildBotPlugin
         private int potionPageIndex = 0;
         private int monsterPageIndex = 0;
 
-        // Offset from top-left (y = 160) so it doesn't obstruct player health / HUD window
-        private Rect windowRect = new Rect(20, 160, 380, 340);
+        // Offset from top-left (y = 210) so it doesn't obstruct player health / HUD window
+        private Rect windowRect = new Rect(20, 210, 380, 340);
 
         private bool isDragging = false;
         private Vector2 dragOffset;
@@ -367,6 +367,13 @@ namespace RebuildBotPlugin
                 if (BotEngine.Instance.JobChange != null && BotEngine.Instance.JobChange.IsActive)
                 {
                     GUI.Label(cursor.Next(22), $"<color=#FFD700><b>[Job Change]:</b> {BotEngine.Instance.JobChange.CurrentState}</color>");
+                }
+
+                if (BotEngine.Instance.Macro != null && BotEngine.Instance.Macro.HasActiveMacro)
+                {
+                    string actionDesc = BotEngine.Instance.Macro.CurrentAction?.Description ?? "Running Queue";
+                    int qCount = BotEngine.Instance.Macro.ActionQueue.Count;
+                    GUI.Label(cursor.Next(22), $"<color=#FF77FF><b>[Macro]:</b> {actionDesc} (Queue: {qCount})</color>");
                 }
 
                 float fps = BotEngine.Instance.LowSpec?.CurrentCalculatedFps ?? 0f;

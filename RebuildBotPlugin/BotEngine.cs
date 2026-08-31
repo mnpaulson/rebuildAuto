@@ -49,6 +49,9 @@ namespace RebuildBotPlugin
         public LowSpecController LowSpec { get; } = new LowSpecController();
         public JobChangeController JobChange { get; } = new JobChangeController();
         public EquipmentController Equipment { get; } = new EquipmentController();
+        public MacroController Macro { get; } = new MacroController();
+
+        public ServerControllable Player => CameraFollower.Instance?.Target != null ? CameraFollower.Instance.Target.GetComponent<ServerControllable>() : null;
 
         private float deathTimestamp = 0f;
         private float lastRespawnTime = 0f;
@@ -157,6 +160,7 @@ namespace RebuildBotPlugin
 
             // Successfully in-game - reset reconnect state
             Login.OnWorldEntered();
+            Services.ProfileManager.OnCharacterIdentified(player.Name);
 
             // Player Death Handling
             if (player.Hp <= 0 || !player.IsCharacterAlive)
@@ -259,6 +263,12 @@ namespace RebuildBotPlugin
             {
                 Combat.CurrentLockedTargetId = attacker.Id;
                 Combat.ExecuteCombatAction(netManager, player, attacker, now, Navigation, Targeting, ref CurrentState);
+                return;
+            }
+
+            // PRIORITY 2.5: DISCRETE MACRO ACTION QUEUE (Buy, Equip, Upgrade, Socket, Travel, etc.)
+            if (Macro.ProcessMacro(this, now))
+            {
                 return;
             }
 

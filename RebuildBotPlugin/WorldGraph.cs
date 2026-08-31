@@ -21,6 +21,66 @@ namespace RebuildBotPlugin
         public int ZenyCost = 0;
 
         public Vector2Int CenterPos => new Vector2Int(FromPos.x + Math.Max(Width / 2, 0), FromPos.y + Math.Max(Height / 2, 0));
+
+        public Vector2Int GetWalkableTriggerTile(Assets.Scripts.MapEditor.RagnarokWalkData walkData, Vector2Int fromPlayerPos)
+        {
+            if (walkData == null) return CenterPos;
+
+            int w = Math.Max(Width, 1);
+            int h = Math.Max(Height, 1);
+
+            Vector2Int bestTile = CenterPos;
+            float bestDist = float.MaxValue;
+            bool foundWalkable = false;
+
+            // 1. Check all cells inside the warp bounding box
+            for (int x = FromPos.x; x < FromPos.x + w; x++)
+            {
+                for (int y = FromPos.y; y < FromPos.y + h; y++)
+                {
+                    if (x >= 0 && y >= 0 && x < walkData.Width && y < walkData.Height && walkData.CellWalkable(x, y))
+                    {
+                        float d = Vector2.Distance(fromPlayerPos, new Vector2(x, y));
+                        if (d < bestDist)
+                        {
+                            bestDist = d;
+                            bestTile = new Vector2Int(x, y);
+                            foundWalkable = true;
+                        }
+                    }
+                }
+            }
+
+            if (foundWalkable) return bestTile;
+
+            // 2. If no cells inside the bounding box are marked walkable, check 1-tile perimeter around the box
+            for (int x = FromPos.x - 1; x <= FromPos.x + w; x++)
+            {
+                for (int y = FromPos.y - 1; y <= FromPos.y + h; y++)
+                {
+                    if (x >= 0 && y >= 0 && x < walkData.Width && y < walkData.Height && walkData.CellWalkable(x, y))
+                    {
+                        float d = Vector2.Distance(fromPlayerPos, new Vector2(x, y));
+                        if (d < bestDist)
+                        {
+                            bestDist = d;
+                            bestTile = new Vector2Int(x, y);
+                            foundWalkable = true;
+                        }
+                    }
+                }
+            }
+
+            return bestTile;
+        }
+
+        public bool IsInsideWarp(Vector2Int pos)
+        {
+            int w = Math.Max(Width, 1);
+            int h = Math.Max(Height, 1);
+            return pos.x >= FromPos.x && pos.x < FromPos.x + w &&
+                   pos.y >= FromPos.y && pos.y < FromPos.y + h;
+        }
     }
 
     public class WorldGraph
@@ -326,13 +386,16 @@ namespace RebuildBotPlugin
             // Seed initial warps leaving startMap from current zone
             foreach (var warp in reachableStartWarps)
             {
-                float edgeCost = warp.IsKafraTeleport ? 0.2f : 1.0f;
+                float walkFromStart = Vector2.Distance(startPos, warp.CenterPos);
+                float edgeCost = (warp.IsKafraTeleport ? 0.2f : 1.0f) + (walkFromStart * 0.0005f);
                 distances[warp] = edgeCost;
                 parentWarp[warp] = null;
                 pq.Add((warp, edgeCost));
             }
 
             WarpConnection bestEndWarp = null;
+            float bestGoalCost = float.MaxValue;
+
             while (pq.Count > 0)
             {
                 int bestIdx = 0;
@@ -352,25 +415,42 @@ namespace RebuildBotPlugin
                 if (current.dist > distances[current.warp])
                     continue;
 
+                // If current exploration is already strictly worse than a complete path found, we can stop!
+                if (current.dist >= bestGoalCost)
+                {
+                    break;
+                }
+
                 // Check if this warp lands on targetMap
                 if (string.Equals(current.warp.DestMap, targetMap, StringComparison.OrdinalIgnoreCase))
                 {
                     if (isSameMap && targetPos.HasValue && isReachableOnStartMap != null)
                     {
                         // If re-entering the original startMap, ensure this warp lands in the zone containing targetPos
-                        if (isReachableOnStartMap(current.warp.DestPos, targetPos.Value))
+                        if (!isReachableOnStartMap(current.warp.DestPos, targetPos.Value))
                         {
-                            bestEndWarp = current.warp;
-                            break;
+                            // Did not land in target zone, continue exploring
+                            goto EXPAND;
                         }
                     }
-                    else
+
+                    float finalWalkDist = targetPos.HasValue ? Vector2.Distance(current.warp.DestPos, targetPos.Value) : 0f;
+                    float goalCost = current.dist + (finalWalkDist * 0.005f);
+
+                    if (goalCost < bestGoalCost)
                     {
+                        bestGoalCost = goalCost;
                         bestEndWarp = current.warp;
+                    }
+
+                    // If no specific targetPos requested or distance is negligible, we found the optimal route
+                    if (!targetPos.HasValue || finalWalkDist <= 5f)
+                    {
                         break;
                     }
                 }
 
+            EXPAND:
                 // Expand warps leaving current.warp.DestMap
                 if (MapNodes.TryGetValue(current.warp.DestMap, out var nextWarps))
                 {
@@ -383,10 +463,11 @@ namespace RebuildBotPlugin
                                 continue;
                         }
 
-                        float edgeCost = nextWarp.IsKafraTeleport ? 0.2f : 1.0f;
+                        float walkBetween = Vector2.Distance(current.warp.DestPos, nextWarp.CenterPos);
+                        float edgeCost = (nextWarp.IsKafraTeleport ? 0.2f : 1.0f) + (walkBetween * 0.0005f);
                         float newDist = current.dist + edgeCost;
 
-                        if (!distances.TryGetValue(nextWarp, out float oldDist) || newDist < oldDist)
+                        if (newDist < bestGoalCost && (!distances.TryGetValue(nextWarp, out float oldDist) || newDist < oldDist))
                         {
                             distances[nextWarp] = newDist;
                             parentWarp[nextWarp] = current.warp;

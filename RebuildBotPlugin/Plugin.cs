@@ -23,7 +23,17 @@ namespace RebuildBotPlugin
             Instance = this;
             Log.LogInfo("Plugin com.rebuild.automation is loading (IL2CPP)...");
 
+            Services.ProfileManager.InitializeFromCommandLine();
             BotConfigManager.LoadConfig();
+
+            if (Services.ProfileManager.LowSpecCliFlag)
+            {
+                BotConfigManager.Current.LowSpecMode = true;
+                if (Services.ProfileManager.TargetFpsCli.HasValue)
+                {
+                    BotConfigManager.Current.TargetFrameRate = Services.ProfileManager.TargetFpsCli.Value;
+                }
+            }
 
             // Load embedded 1,700+ warp portal network
             WorldGraph.Instance.LoadEmbeddedWarps();

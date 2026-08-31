@@ -1,0 +1,10 @@
+{
+    "Commands": [
+        {
+            "ActionType": "UpgradeItem",
+            "ItemName": "Sword",
+            "TargetRefineLevel": 3,
+            "StopAtSafeLimit": true
+        }
+    ]
+}

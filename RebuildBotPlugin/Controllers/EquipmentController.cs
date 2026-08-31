@@ -184,5 +184,115 @@ namespace RebuildBotPlugin.Controllers
             }
             return false;
         }
+
+        public static int ResolveSlotIndex(string slotName, EquipSlot slot = EquipSlot.None)
+        {
+            if (slot != EquipSlot.None) return (int)slot;
+            if (string.IsNullOrWhiteSpace(slotName)) return -1;
+
+            string clean = slotName.ToLowerInvariant().Replace(" ", "").Replace("_", "");
+            if (clean.Contains("headtop") || clean.Contains("upper")) return 0;
+            if (clean.Contains("headmid") || clean.Contains("mid")) return 1;
+            if (clean.Contains("headlow") || clean.Contains("bottom")) return 2;
+            if (clean.Contains("armor") || clean.Contains("body")) return 3;
+            if (clean.Contains("weapon") || clean.Contains("mainhand") || clean.Contains("right")) return 4;
+            if (clean.Contains("shield") || clean.Contains("offhand") || clean.Contains("left")) return 5;
+            if (clean.Contains("garment") || clean.Contains("cloak") || clean.Contains("muffler")) return 6;
+            if (clean.Contains("boots") || clean.Contains("shoes") || clean.Contains("foot")) return 7;
+            if (clean.Contains("acc1") || clean.Contains("accessory1")) return 8;
+            if (clean.Contains("acc2") || clean.Contains("accessory2")) return 9;
+            return -1;
+        }
+
+        public static string GetSlotName(int slotIndex)
+        {
+            switch (slotIndex)
+            {
+                case 0: return "HeadTop";
+                case 1: return "HeadMid";
+                case 2: return "HeadBottom";
+                case 3: return "Armor";
+                case 4: return "Weapon";
+                case 5: return "Shield";
+                case 6: return "Garment";
+                case 7: return "Footgear";
+                case 8: return "Accessory 1";
+                case 9: return "Accessory 2";
+                default: return $"Slot {slotIndex}";
+            }
+        }
+
+        public static bool IsItemEquipped(int bagSlotId)
+        {
+            var state = PlayerState.Instance;
+            if (state == null || state.EquippedItems == null) return false;
+            for (int i = 0; i < state.EquippedItems.Length; i++)
+            {
+                if (state.EquippedItems[i] == bagSlotId) return true;
+            }
+            return false;
+        }
+
+        public static bool TryFindItemInInventory(string itemName, int bagSlotId, out InventoryItem foundItem)
+        {
+            foundItem = default;
+            if (!InventoryHelper.TryGetInventoryData(out var inv) || inv == null) return false;
+
+            foreach (var kvp in inv)
+            {
+                var item = kvp.Value;
+                if (item == null || item.Count <= 0 || item.ItemData == null) continue;
+
+                if (bagSlotId >= 0 && item.BagSlotId == bagSlotId)
+                {
+                    foundItem = item;
+                    return true;
+                }
+
+                if (!string.IsNullOrWhiteSpace(itemName) &&
+                    (string.Equals(item.ItemData.Name, itemName, StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(item.ItemData.Code, itemName, StringComparison.OrdinalIgnoreCase) ||
+                     item.ItemData.Name.IndexOf(itemName, StringComparison.OrdinalIgnoreCase) >= 0))
+                {
+                    foundItem = item;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static int GetRefineSafeLimit(ItemData dat)
+        {
+            if (dat == null) return 4;
+            if (dat.ItemClass == ItemClass.Equipment) return 4; // Armor: +4
+            if (dat.ItemClass == ItemClass.Weapon)
+            {
+                switch (dat.ItemRank)
+                {
+                    case 1: return 7; // Level 1 weapon: +7
+                    case 2: return 6; // Level 2 weapon: +6
+                    case 3: return 5; // Level 3 weapon: +5
+                    case 4: return 4; // Level 4 weapon: +4
+                }
+            }
+            return 4;
+        }
+
+        public static int GetRefineOreId(ItemData dat)
+        {
+            if (dat == null) return 1010; // Phracon default
+            if (dat.ItemClass == ItemClass.Equipment) return 985; // Elunium for armor
+            if (dat.ItemClass == ItemClass.Weapon)
+            {
+                switch (dat.ItemRank)
+                {
+                    case 1: return 1010; // Phracon
+                    case 2: return 1011; // Emveretarcon
+                    case 3: return 984;  // Oridecon
+                    case 4: return 984;  // Oridecon
+                }
+            }
+            return 1010;
+        }
     }
 }

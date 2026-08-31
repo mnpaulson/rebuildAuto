@@ -84,15 +84,7 @@ namespace RebuildBotPlugin
         public const string DevWorkspaceConfigPath = @"c:\dev\rebuildAuto\RebuildBotPlugin\bot_config.json";
         public static readonly string GameDirConfigPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bot_config.json");
 
-        public static string ConfigPath
-        {
-            get
-            {
-                if (File.Exists(DevWorkspaceConfigPath))
-                    return DevWorkspaceConfigPath;
-                return GameDirConfigPath;
-            }
-        }
+        public static string ConfigPath => Services.ProfileManager.GetConfigPath();
 
         private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
@@ -104,14 +96,7 @@ namespace RebuildBotPlugin
         {
             try
             {
-                // If both exist, pick the file that was modified most recently
                 string targetPath = ConfigPath;
-                if (File.Exists(DevWorkspaceConfigPath) && File.Exists(GameDirConfigPath))
-                {
-                    DateTime devTime = File.GetLastWriteTimeUtc(DevWorkspaceConfigPath);
-                    DateTime gameTime = File.GetLastWriteTimeUtc(GameDirConfigPath);
-                    targetPath = (devTime >= gameTime) ? DevWorkspaceConfigPath : GameDirConfigPath;
-                }
 
                 if (File.Exists(targetPath))
                 {
@@ -127,19 +112,7 @@ namespace RebuildBotPlugin
                         if (Current.ItemRules == null)
                             Current.ItemRules = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-                        Debug.Log($"[RebuildBotPlugin] Config reloaded successfully from {targetPath}");
-
-                        // Bidirectional sync: keep both files identical
-                        try
-                        {
-                            if (File.Exists(DevWorkspaceConfigPath) && File.Exists(GameDirConfigPath))
-                            {
-                                string otherPath = (targetPath == DevWorkspaceConfigPath) ? GameDirConfigPath : DevWorkspaceConfigPath;
-                                File.WriteAllText(otherPath, json);
-                            }
-                        }
-                        catch { }
-
+                        Debug.Log($"[RebuildBotPlugin] Config reloaded successfully from {targetPath} (Profile: '{(string.IsNullOrEmpty(Services.ProfileManager.ActiveProfileName) ? "Default" : Services.ProfileManager.ActiveProfileName)}')");
                         return true;
                     }
                 }
@@ -159,16 +132,17 @@ namespace RebuildBotPlugin
         {
             try
             {
+                string path = ConfigPath;
                 string json = JsonSerializer.Serialize(Current, JsonOptions);
-                File.WriteAllText(ConfigPath, json);
 
-                // Mirror save to game directory if saving to workspace
-                if (ConfigPath != GameDirConfigPath && Directory.Exists(AppDomain.CurrentDomain.BaseDirectory))
+                string dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
                 {
-                    try { File.WriteAllText(GameDirConfigPath, json); } catch { }
+                    Directory.CreateDirectory(dir);
                 }
 
-                Debug.Log($"[RebuildBotPlugin] Config saved to {ConfigPath}");
+                File.WriteAllText(path, json);
+                Debug.Log($"[RebuildBotPlugin] Config saved to {path}");
             }
             catch (Exception ex)
             {

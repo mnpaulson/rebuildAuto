@@ -23,11 +23,15 @@ This document serves as the primary technical specification, operational guide, 
 ## 2. Build & Deployment Workflow
 
 ### Deployment Scripts:
+- **`launch.bat`**: Interactive deployment and launcher tool:
+  ```bat
+  .\launch.bat           :: Builds Release DLL, deploys, displays numbered profile list, and launches
+  ```
 - **`deploy.bat`**: Full deployment tool at the workspace root:
   ```bat
   .\deploy.bat           :: Compiles Release build, checks for running game client, copies DLL
   .\deploy.bat /copy     :: Fast deploy without rebuilding
-  .\deploy.bat /config   :: Force-synchronizes bot_config.json from workspace to game directory
+  .\deploy.bat /config   :: Force-synchronizes bot_config.json & accounts.json to game directory
   .\deploy.bat /run      :: Builds, deploys, and automatically starts RebuildClient.exe
   ```
 - **`updateclient.bat`**: The client update batch script also copies `RebuildBotPlugin.dll` to `C:\games\RagnarokRebuild\BepInEx\plugins\`.
@@ -121,6 +125,88 @@ dotnet build RebuildBotPlugin/RebuildBotPlugin.csproj -c Release -p:DeployOnBuil
 ---
 
 ## 5. Hotkeys & In-Game Controls
+- **`F8`**: Toggle Low-Spec Mode (0% GPU culling mask, audio mute, framerate cap).
 - **`F9`**: Toggle Bot GUI Overlay window.
 - **`F10`**: Master Toggle (Enable / Disable bot automation).
-- **`F5`**: Hot-reload `bot_config.json` configuration from disk.
+- **`F5`**: Hot-reload active `bot_config.json` configuration from disk.
+
+---
+
+## 6. Multi-Bot Architecture, Accounts & CLI Launcher
+
+### A. Shared Account Registry (`accounts.json`)
+Located in `RebuildBotPlugin/accounts.json` (or game directory). Maps credentials and character slots to accounts:
+```json
+{
+  "Accounts": [
+    {
+      "AccountId": "account_1",
+      "Username": "bot_user_01",
+      "Password": "password123",
+      "Characters": [
+        { "Name": "Test-Sword", "Slot": 0 },
+        { "Name": "Test-Merchant", "Slot": 1 }
+      ]
+    }
+  ]
+}
+```
+
+### B. Per-Character Profile Isolation (`ProfileManager`)
+Each running bot instance can operate out of its own isolated profile directory:
+```
+profiles/<CharacterName>/
+├── bot_config.json      <-- Dedicated hunting map, skills, supplies, stat goals
+├── bot_macro.json       <-- Discrete action queue for this bot
+└── macro_status.json    <-- Real-time execution status & history
+```
+- **Fallback**: If no profile is specified, defaults to root `bot_config.json` and `bot_macro.json`.
+- **Dynamic Detection**: If launched manually without CLI arguments, the plugin automatically switches to `profiles/<CharacterName>/` upon entering the game world.
+
+### C. CLI Launch Arguments
+Launch multiple instances of `RebuildClient.exe` with dedicated profiles and settings:
+```cmd
+RebuildClient.exe -profile "Test-Sword"
+RebuildClient.exe -profile "Test-Archer" -lowspec -fps 10
+```
+
+Supported Arguments:
+- `-profile "<Name>"` / `-character "<Name>"`: Sets active character profile.
+- `-account "<AccountId>"`: Selects a specific account by ID.
+- `-lowspec`: Starts client in Low-Spec mode (0% GPU render).
+- `-fps <int>`: Sets target framerate limit (e.g. `-fps 10`).
+
+---
+
+## 7. Discrete Macro Action System & Blacksmith Refiner
+
+### A. Macro Action Queue (`bot_macro.json`)
+The bot polls `bot_macro.json` every 1.0s, enqueues commands, and executes them with high priority (preempting normal hunting):
+- **`UpgradeItem`**: Navigates to Prontera Blacksmith (`prt_in 63, 60`), validates Zeny and required ores (Phracon / Emveretarcon / Oridecon / Elunium), purchases missing ores from Vurewell, executes refine loops with Hollgrehenn, and cleanly exits on completion.
+- **`BuyItem`**: Navigates to NPC vendor and purchases specified item quantity.
+- **`EquipItem` / `UnequipItem`**: Equips or unequips items by name or slot.
+- **`SlotCard`**: Sockets monster cards into available equipment slots.
+- **`UseItem`**: Consumes consumables/potions with count tracking.
+- **`TravelToMap`**: Macro pathfinding and Kafra teleport across maps.
+
+### B. Status & Orchestrator Output (`macro_status.json`)
+Outputs structured JSON status for LLM and Orchestrator monitoring:
+```json
+{
+  "Profile": "Test-Sword",
+  "HasActiveMacro": false,
+  "QueueCount": 0,
+  "CurrentAction": null,
+  "RecentHistory": [
+    {
+      "ActionId": "e60e9a03",
+      "ActionType": "UpgradeItem",
+      "Description": "Upgrade 'Sword' to +3",
+      "Status": "Success",
+      "ResultMessage": "Successfully refined 'Sword' to +3!",
+      "CompletedAt": "2026-08-31T12:07:21Z"
+    }
+  ]
+}
+```
+

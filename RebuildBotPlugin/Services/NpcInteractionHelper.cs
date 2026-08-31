@@ -392,7 +392,7 @@ namespace RebuildBotPlugin.Services
 
                 if (RefineItemWindow.Instance != null)
                 {
-                    UnityEngine.Object.Destroy(RefineItemWindow.Instance.gameObject);
+                    RefineItemWindow.Instance.CancelRefine();
                 }
             }
             catch (Exception ex)

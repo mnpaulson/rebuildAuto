@@ -129,3 +129,12 @@ RebuildBotPlugin/bin/
 RebuildBotPlugin/obj/
 scratch/
 deploy.bat
+launch.bat
+
+# Bot Automation User Data & Credentials
+RebuildBotPlugin/accounts.json
+accounts.json
+RebuildBotPlugin/bot_macro.json
+RebuildBotPlugin/macro_status.json
+RebuildBotPlugin/profiles/
+profiles/

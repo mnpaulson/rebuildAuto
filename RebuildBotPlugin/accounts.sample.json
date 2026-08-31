@@ -1,0 +1,15 @@
+{
+  "Accounts": [
+    {
+      "AccountId": "account_1",
+      "Username": "bot_user_01",
+      "Password": "password123",
+      "Characters": [
+        {
+          "Name": "Test-Sword",
+          "Slot": 0
+        }
+      ]
+    }
+  ]
+}

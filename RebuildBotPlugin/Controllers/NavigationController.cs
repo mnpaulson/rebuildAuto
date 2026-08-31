@@ -193,9 +193,37 @@ namespace RebuildBotPlugin.Controllers
                 int chebyshevDist = Math.Max(Math.Abs(destination.x - currentPos.x), Math.Abs(destination.y - currentPos.y));
                 if (totalDist <= 14f && chebyshevDist <= 15)
                 {
-                    if (walkData.CellWalkable(destination.x, destination.y))
+                    Vector2Int directTarget = destination;
+                    bool directWalkable = walkData.CellWalkable(destination.x, destination.y);
+
+                    if (!directWalkable)
                     {
-                        int steps = Pathfinder.GetPath(walkData, currentPos, destination, tempPath);
+                        // Check 8 adjacent neighbor cells around destination to find a walkable tile
+                        float bestNeighborDist = float.MaxValue;
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            for (int dy = -1; dy <= 1; dy++)
+                            {
+                                if (dx == 0 && dy == 0) continue;
+                                int nx = destination.x + dx;
+                                int ny = destination.y + dy;
+                                if (nx >= 0 && ny >= 0 && nx < walkData.Width && ny < walkData.Height && walkData.CellWalkable(nx, ny))
+                                {
+                                    float d = Vector2.Distance(currentPos, new Vector2(nx, ny));
+                                    if (d < bestNeighborDist)
+                                    {
+                                        bestNeighborDist = d;
+                                        directTarget = new Vector2Int(nx, ny);
+                                        directWalkable = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (directWalkable)
+                    {
+                        int steps = Pathfinder.GetPath(walkData, currentPos, directTarget, tempPath);
                         if (steps > 0)
                         {
                             bool portalBlocked = false;
@@ -213,7 +241,7 @@ namespace RebuildBotPlugin.Controllers
 
                             if (!portalBlocked)
                             {
-                                netManager.MovePlayer(destination);
+                                netManager.MovePlayer(directTarget);
                                 return true;
                             }
                         }
@@ -225,7 +253,13 @@ namespace RebuildBotPlugin.Controllers
                 float[] angleOffsets = forwardOnly
                     ? new float[] { 0f, 20f, -20f, 40f, -40f }
                     : new float[] { 0f, 20f, -20f, 40f, -40f, 60f, -60f, 80f, -80f };
-                int[] stepDistances = { 12, 10, 8, 6, 4 };
+
+                int maxStep = Mathf.Clamp(Mathf.RoundToInt(totalDist), 3, 12);
+                int[] stepDistances = (maxStep >= 10)
+                    ? new int[] { maxStep, 8, 6, 4, 2 }
+                    : (maxStep >= 6)
+                        ? new int[] { maxStep, 4, 3, 2, 1 }
+                        : new int[] { maxStep, 2, 1 };
 
                 foreach (int d in stepDistances)
                 {
@@ -285,12 +319,12 @@ namespace RebuildBotPlugin.Controllers
             }
         }
 
-        public bool ProcessTravel(NetworkManager netManager, ServerControllable player, float now, ref BotState currentState, Vector2Int? targetCellPos = null)
+        public bool ProcessTravel(NetworkManager netManager, ServerControllable player, float now, ref BotState currentState, Vector2Int? targetCellPos = null, string destinationMapOverride = null)
         {
             bool isTownRoutine = BotEngine.Instance != null && BotEngine.Instance.TownRoutine.IsActive;
-            string destinationMap = isTownRoutine
-                ? TownRoutineController.BaseMap
-                : BotConfigManager.Current.TargetMap;
+            string destinationMap = !string.IsNullOrWhiteSpace(destinationMapOverride)
+                ? destinationMapOverride
+                : (isTownRoutine ? TownRoutineController.BaseMap : BotConfigManager.Current.TargetMap);
 
             if (string.IsNullOrWhiteSpace(destinationMap))
             {
@@ -575,29 +609,23 @@ namespace RebuildBotPlugin.Controllers
 
             if (travelPreClick || travelStoppedReady)
             {
-                string nextDestMap = nextHop.DestMap;
-                var connectingWarps = WorldGraph.Instance.GetWarpsConnecting(netManager.CurrentMap, nextDestMap);
-
-                WarpConnection bestWarp = null;
-                float bestDist = float.MaxValue;
-
-                foreach (var warp in connectingWarps)
-                {
-                    Vector2Int center = warp.CenterPos;
-                    if (!MapNavMesh.Instance.IsReachable(player.CellPosition, center))
-                        continue;
-
-                    float d = Vector2.Distance(player.CellPosition, center);
-                    if (d < bestDist)
-                    {
-                        bestDist = d;
-                        bestWarp = warp;
-                    }
-                }
-
-                bestWarp ??= nextHop;
-                Vector2Int warpPos = bestWarp.CenterPos;
+                var bestWarp = nextHop;
+                string nextDestMap = bestWarp.DestMap;
+                var walkProvider = RoWalkDataProvider.Instance;
+                Vector2Int warpPos = bestWarp.GetWalkableTriggerTile(walkProvider != null ? walkProvider.WalkData : null, player.CellPosition);
                 float distToWarp = Vector2.Distance(player.CellPosition, warpPos);
+                bool isInsideWarp = bestWarp.IsInsideWarp(player.CellPosition);
+
+                // If standing inside portal bounding box or within direct stepping distance, step right into it
+                if (isInsideWarp || distToWarp <= 1.8f)
+                {
+                    currentState = BotState.TravelingToTargetMap;
+                    netManager.MovePlayer(warpPos);
+                    lastTravelTime = now;
+                    nextTravelDelay = 0.3f;
+                    BotEngine.Instance?.LogEvent($"[Travel] Stepping into portal for '{nextDestMap}' at ({warpPos.x}, {warpPos.y})!");
+                    return true;
+                }
 
                 var travelWaypoints = MapNavMesh.Instance.FindRouteWaypoints(player.CellPosition, warpPos, 11);
                 Vector2Int travelTarget = (travelWaypoints != null && travelWaypoints.Count > 0)
