@@ -12,10 +12,32 @@ namespace RebuildBotPlugin
     {
         public static Plugin Instance;
         private GameObject botContainer;
+        private static readonly object fileLock = new object();
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern IntPtr GetConsoleWindow();
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
         public static void LogInfo(string msg)
         {
             Instance?.Log.LogInfo(msg);
+            try
+            {
+                string logPath = Services.ProfileManager.GetLogPath();
+                string dir = Path.GetDirectoryName(logPath);
+                if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
+                lock (fileLock)
+                {
+                    File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {msg}{Environment.NewLine}");
+                }
+            }
+            catch { }
         }
 
         public override void Load()
@@ -25,6 +47,25 @@ namespace RebuildBotPlugin
 
             Services.ProfileManager.InitializeFromCommandLine();
             BotConfigManager.LoadConfig();
+
+            if (!string.IsNullOrWhiteSpace(Services.ProfileManager.ExplicitCliProfile))
+            {
+                BotConfigManager.Current.Enabled = true;
+                Log.LogInfo($"[Profile] Launched with explicit target '{Services.ProfileManager.ExplicitCliProfile}'. Bot automation automatically ENABLED.");
+            }
+
+            if (Services.ProfileManager.HiddenCliFlag)
+            {
+                try
+                {
+                    IntPtr consoleHwnd = GetConsoleWindow();
+                    if (consoleHwnd != IntPtr.Zero)
+                    {
+                        ShowWindow(consoleHwnd, 0);
+                    }
+                }
+                catch { }
+            }
 
             if (Services.ProfileManager.LowSpecCliFlag)
             {

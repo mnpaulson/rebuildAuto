@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ragnarok Rebuild - Fleet Orchestrator</title>
+  <link rel="stylesheet" href="css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header-bar">
+      <div class="brand-section">
+        <div class="brand-icon">RO</div>
+        <div class="brand-title-group">
+          <h1>
+            Ragnarok Rebuild 
+            <span class="badge-pill badge-blue">Fleet Orchestrator</span>
+          </h1>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="connection-indicator">
+          <div class="status-dot offline" id="ws-status-dot"></div>
+          <span id="ws-status-text">Connecting...</span>
+        </div>
+        <button class="btn btn-emerald" onclick="startAll()">Start All Bots</button>
+        <button class="btn btn-danger" onclick="stopAll()">Stop All</button>
+      </div>
+    </header>
+
+    <!-- KPI Summary Grid -->
+    <section class="kpi-grid">
+      <div class="kpi-card">
+        <span class="kpi-title">Active Fleet</span>
+        <span class="kpi-value" id="kpi-active-bots">0 / 0</span>
+        <span class="kpi-subtext">Online bot instances</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Fleet EXP Rate</span>
+        <span class="kpi-value" id="kpi-fleet-exp" style="color: var(--accent-blue);">0/hr</span>
+        <span class="kpi-subtext">Combined Base EXP / hour</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Total Fleet Zeny</span>
+        <span class="kpi-value" id="kpi-fleet-zeny" style="color: var(--accent-amber);">0 z</span>
+        <span class="kpi-subtext">Cumulative liquid funds</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Total Monster Kills</span>
+        <span class="kpi-value" id="kpi-total-kills" style="color: var(--accent-emerald);">0</span>
+        <span class="kpi-subtext">Session combat victories</span>
+      </div>
+    </section>
+
+    <!-- Win32 Window Management Toolbar (Tremor Segmented Control) -->
+    <section class="toolbar-section">
+      <div class="toolbar-group">
+        <span class="toolbar-label">Target Display:</span>
+        <select class="select-control" id="monitor-select">
+          <option value="0">Primary Display (1920x1080)</option>
+        </select>
+      </div>
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">Grid Layout:</span>
+        <div class="segmented-control">
+          <button class="segmented-btn" onclick="tileWindows('2x2')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            Tile 2x2
+          </button>
+          <button class="segmented-btn" onclick="tileWindows('3x2')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="7"/><rect x="9.5" y="3" width="5" height="7"/><rect x="16" y="3" width="5" height="7"/><rect x="3" y="14" width="5" height="7"/><rect x="9.5" y="14" width="5" height="7"/><rect x="16" y="14" width="5" height="7"/></svg>
+            Tile 3x2
+          </button>
+          <button class="segmented-btn" onclick="tileWindows('1x2')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="18"/><rect x="13" y="3" width="8" height="18"/></svg>
+            Side-by-Side
+          </button>
+          <button class="segmented-btn" onclick="tileWindows('left-main')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="11" height="18"/><rect x="16" y="3" width="5" height="8"/><rect x="16" y="13" width="5" height="8"/></svg>
+            Main + Support
+          </button>
+          <button class="segmented-btn" onclick="tileWindows('stack')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="14" height="14"/><rect x="7" y="7" width="14" height="14"/></svg>
+            Cascade
+          </button>
+        </div>
+      </div>
+
+      <div class="toolbar-group">
+        <button class="btn btn-secondary btn-sm" onclick="hideAll()" title="Hide all bot windows from desktop (Headless/Background mode)">Hide All</button>
+        <button class="btn btn-secondary btn-sm" onclick="showAll()" title="Restore and unhide all bot windows to desktop">Show All</button>
+        <button class="btn btn-secondary btn-sm" onclick="minimizeAll()">Minimize All</button>
+        <button class="btn btn-secondary btn-sm" onclick="restoreAll()">Restore All</button>
+      </div>
+    </section>
+
+    <!-- Live Fleet Cards Grid -->
+    <main class="fleet-grid" id="fleet-grid">
+      <!-- Dynamically Populated via JS -->
+    </main>
+
+    <!-- Real-Time Analytics Line Chart -->
+    <section class="chart-section">
+      <div class="chart-header">
+        <h2 class="chart-title">Fleet EXP/hr Velocity (Minute-by-Minute)</h2>
+        <span class="badge-pill badge-slate">1m Intervals</span>
+      </div>
+      <div class="chart-canvas-container">
+        <canvas id="telemetry-chart"></canvas>
+      </div>
+    </section>
+
+    <!-- Live Bot Terminal & Console Viewer -->
+    <section class="terminal-section">
+      <div class="terminal-header">
+        <div class="terminal-title-group">
+          <span class="live-dot"></span>
+          <h2 class="terminal-title">Live Bot Console</h2>
+          <div class="terminal-tabs" id="terminal-tabs">
+            <button class="terminal-tab active" data-tab="all" onclick="switchLogTab('all')">Fleet (All Bots)</button>
+            <!-- Dynamic bot tabs added via JS -->
+          </div>
+        </div>
+
+        <div class="terminal-controls">
+          <input type="text" class="terminal-search" id="log-search-input" placeholder="Filter logs..." oninput="onLogFilterChanged()">
+          <select class="select-control terminal-category-select" id="log-category-select" onchange="onLogFilterChanged()">
+            <option value="all">All Categories</option>
+            <option value="Combat">Combat</option>
+            <option value="Loot">Loot</option>
+            <option value="Macro">Macro</option>
+            <option value="Travel">Travel</option>
+            <option value="Town Routine">Town</option>
+            <option value="Progression">Progression</option>
+            <option value="State">State</option>
+          </select>
+          <label class="terminal-checkbox-label">
+            <input type="checkbox" id="log-autoscroll" checked> Auto-Scroll
+          </label>
+          <button class="btn btn-secondary btn-sm" onclick="clearActiveLogs()" title="Clear view buffer">Clear</button>
+        </div>
+      </div>
+
+      <div class="terminal-body" id="terminal-body">
+        <div class="terminal-lines" id="terminal-lines">
+          <div class="terminal-empty-msg">Waiting for bot logs...</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Discrete Macro Dispatch Modal -->
+  <div class="modal-backdrop" id="macro-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="macro-modal-title">Dispatch Macro Action</h2>
+        <button class="btn btn-secondary btn-sm" onclick="closeMacroModal()">&times;</button>
+      </div>
+
+      <input type="hidden" id="macro-profile-target">
+
+      <div class="form-group">
+        <label>Macro Action Type</label>
+        <select class="select-control" id="macro-type-select">
+          <option value="UpgradeItem">Upgrade / Refine Gear (Hollgrehenn)</option>
+          <option value="TravelToMap">Travel To Map (Kafra / Walk)</option>
+          <option value="BuyItem">Buy Item from Vendor</option>
+        </select>
+      </div>
+
+      <!-- Upgrade Fields -->
+      <div id="macro-upgrade-fields" style="display: flex; flex-direction: column; gap: 14px;">
+        <div class="form-group">
+          <label>Item Name</label>
+          <input type="text" class="form-input" id="macro-item-name" placeholder="e.g. Bow, Sword, Guard">
+        </div>
+        <div class="form-group">
+          <label>Target Refine Level (+1 to +10)</label>
+          <input type="number" class="form-input" id="macro-target-refine" value="4" min="1" max="10">
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="macro-safe-limit" checked>
+          <label for="macro-safe-limit" style="font-size: 0.8rem; color: var(--text-primary);">Stop at Safe Refine Limit</label>
+        </div>
+      </div>
+
+      <!-- Travel Fields -->
+      <div id="macro-travel-fields" style="display: none; flex-direction: column; gap: 14px;">
+        <div class="form-group">
+          <label>Destination Map</label>
+          <input type="text" class="form-input" id="macro-target-map" placeholder="e.g. pay_fild08, prontera, geffen, pay_fild01">
+        </div>
+      </div>
+
+      <!-- Buy Fields -->
+      <div id="macro-buy-fields" style="display: none; flex-direction: column; gap: 14px;">
+        <div class="form-group">
+          <label>Vendor Substring</label>
+          <input type="text" class="form-input" id="macro-vendor-name" placeholder="e.g. Tool Dealer, Vendor">
+        </div>
+        <div class="form-group">
+          <label>Quantity</label>
+          <input type="number" class="form-input" id="macro-quantity" value="100" min="1">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeMacroModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitMacro()">Enqueue Action</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bot Config Editor Modal -->
+  <div class="modal-backdrop" id="config-modal">
+    <div class="modal-content" style="max-width: 750px;">
+      <div class="modal-header">
+        <h2 id="config-modal-title">Bot Configuration</h2>
+        <button class="btn btn-secondary btn-sm" onclick="closeConfigModal()">&times;</button>
+      </div>
+
+      <input type="hidden" id="config-profile-target">
+
+      <div class="form-group">
+        <label>bot_config.json Content</label>
+        <textarea class="form-textarea" id="config-json-editor"></textarea>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeConfigModal()">Cancel</button>
+        <button class="btn btn-emerald" onclick="saveConfig()">Save Configuration</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

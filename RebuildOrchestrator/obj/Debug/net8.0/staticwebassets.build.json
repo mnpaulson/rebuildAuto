@@ -1,0 +1,77 @@
+{
+  "Version": 1,
+  "Hash": "qQW/NEgYte7kHjsGKUIbODEPMsGcS6r8C/RwrriEB+k=",
+  "Source": "RebuildOrchestrator",
+  "BasePath": "_content/RebuildOrchestrator",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [
+    {
+      "Name": "RebuildOrchestrator\\wwwroot",
+      "Source": "RebuildOrchestrator",
+      "ContentRoot": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\",
+      "BasePath": "_content/RebuildOrchestrator",
+      "Pattern": "**"
+    }
+  ],
+  "Assets": [
+    {
+      "Identity": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\css\\dashboard.css",
+      "SourceId": "RebuildOrchestrator",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\",
+      "BasePath": "_content/RebuildOrchestrator",
+      "RelativePath": "css/dashboard.css",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\css\\dashboard.css"
+    },
+    {
+      "Identity": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\index.html",
+      "SourceId": "RebuildOrchestrator",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\",
+      "BasePath": "_content/RebuildOrchestrator",
+      "RelativePath": "index.html",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\index.html"
+    },
+    {
+      "Identity": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\js\\app.js",
+      "SourceId": "RebuildOrchestrator",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\",
+      "BasePath": "_content/RebuildOrchestrator",
+      "RelativePath": "js/app.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\js\\app.js"
+    }
+  ]
+}

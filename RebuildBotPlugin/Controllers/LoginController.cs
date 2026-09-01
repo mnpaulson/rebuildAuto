@@ -36,6 +36,14 @@ namespace RebuildBotPlugin.Controllers
             disconnectDetectedTime = 0f;
         }
 
+        private void SetLoginState(LoginState newState, string statusText, float now)
+        {
+            State = newState;
+            StatusText = statusText;
+            lastStateChangeTime = now;
+            BotEngine.Instance?.ForceEmitStatus();
+        }
+
         public void OnWorldEntered()
         {
             if (State != LoginState.Idle)
@@ -47,6 +55,7 @@ namespace RebuildBotPlugin.Controllers
             StatusText = "";
             disconnectDetectedTime = 0f;
             wasInGame = true;
+            BotEngine.Instance?.ForceEmitStatus();
         }
 
         public bool ProcessLogin(float now)
@@ -72,18 +81,15 @@ namespace RebuildBotPlugin.Controllers
             {
                 wasInGame = false;
                 disconnectDetectedTime = now;
-                State = LoginState.WaitingCooldown;
                 CurrentAttempt++;
-                lastStateChangeTime = now;
-                StatusText = $"Disconnected. Cooling down ({BotConfigManager.Current.AutoReconnectDelaySeconds:F0}s)...";
+                SetLoginState(LoginState.WaitingCooldown, $"Disconnected. Cooling down ({BotConfigManager.Current.AutoReconnectDelaySeconds:F0}s)...", now);
                 BotEngine.Instance?.LogEvent($"[Login] Disconnect detected. Initiating reconnect routine (Attempt {CurrentAttempt}/{BotConfigManager.Current.MaxReconnectAttempts})...");
                 return true;
             }
 
             if (CurrentAttempt > BotConfigManager.Current.MaxReconnectAttempts)
             {
-                State = LoginState.MaxAttemptsReached;
-                StatusText = $"Max reconnect attempts reached ({BotConfigManager.Current.MaxReconnectAttempts}).";
+                SetLoginState(LoginState.MaxAttemptsReached, $"Max reconnect attempts reached ({BotConfigManager.Current.MaxReconnectAttempts}).", now);
                 return false;
             }
 
@@ -92,10 +98,8 @@ namespace RebuildBotPlugin.Controllers
                 case LoginState.Idle:
                     // Found on title screen without prior in-game session
                     disconnectDetectedTime = now;
-                    State = LoginState.WaitingCooldown;
                     CurrentAttempt++;
-                    lastStateChangeTime = now;
-                    StatusText = $"On Title Screen. Reconnecting (Attempt {CurrentAttempt})...";
+                    SetLoginState(LoginState.WaitingCooldown, $"On Title Screen. Reconnecting (Attempt {CurrentAttempt})...", now);
                     return true;
 
                 case LoginState.WaitingCooldown:
@@ -109,23 +113,17 @@ namespace RebuildBotPlugin.Controllers
                     // Cooldown completed, advance to appropriate window
                     if (titleScreen.NoticeBox != null && titleScreen.NoticeBox.activeSelf)
                     {
-                        State = LoginState.DismissingNotice;
-                        lastStateChangeTime = now;
-                        StatusText = "Dismissing notice popup...";
+                        SetLoginState(LoginState.DismissingNotice, "Dismissing notice popup...", now);
                         return true;
                     }
                     else if (titleScreen.LoginBox != null && titleScreen.LoginBox.gameObject.activeSelf)
                     {
-                        State = LoginState.SubmittingLogin;
-                        lastStateChangeTime = now;
-                        StatusText = "Submitting credentials...";
+                        SetLoginState(LoginState.SubmittingLogin, "Submitting credentials...", now);
                         return true;
                     }
                     else if (titleScreen.CharacterSelectWindow != null && titleScreen.CharacterSelectWindow.gameObject.activeSelf)
                     {
-                        State = LoginState.SelectingCharacter;
-                        lastStateChangeTime = now;
-                        StatusText = "Entering character select...";
+                        SetLoginState(LoginState.SelectingCharacter, "Entering character select...", now);
                         return true;
                     }
                     return true;
@@ -136,14 +134,11 @@ namespace RebuildBotPlugin.Controllers
                         if (now - lastStateChangeTime >= 0.3f)
                         {
                             titleScreen.NoticeBoxOk();
-                            lastStateChangeTime = now;
-                            State = LoginState.SubmittingLogin;
-                            StatusText = "Notice dismissed. Submitting login...";
+                            SetLoginState(LoginState.SubmittingLogin, "Notice dismissed. Submitting login...", now);
                         }
                         return true;
                     }
-                    State = LoginState.SubmittingLogin;
-                    lastStateChangeTime = now;
+                    SetLoginState(LoginState.SubmittingLogin, "Submitting credentials...", now);
                     return true;
 
                 case LoginState.SubmittingLogin:
@@ -172,26 +167,21 @@ namespace RebuildBotPlugin.Controllers
 
                             BotEngine.Instance?.LogEvent($"[Login] Attempting account authentication (Attempt {CurrentAttempt})...");
                             titleScreen.LoginBox.AttemptLogin();
-                            State = LoginState.AwaitingCharacterSelect;
-                            lastStateChangeTime = now;
-                            StatusText = "Authenticating with server...";
+                            SetLoginState(LoginState.AwaitingCharacterSelect, "Authenticating with server...", now);
                         }
                         return true;
                     }
                     else if (titleScreen.CharacterSelectWindow != null && titleScreen.CharacterSelectWindow.gameObject.activeSelf)
                     {
-                        State = LoginState.SelectingCharacter;
-                        lastStateChangeTime = now;
+                        SetLoginState(LoginState.SelectingCharacter, "Entering character select...", now);
                         return true;
                     }
                     else if (titleScreen.NoticeBox != null && titleScreen.NoticeBox.activeSelf)
                     {
                         // Server rejected or returned busy notice
                         disconnectDetectedTime = now;
-                        State = LoginState.WaitingCooldown;
                         CurrentAttempt++;
-                        lastStateChangeTime = now;
-                        StatusText = $"Server notice received. Retrying in {BotConfigManager.Current.AutoReconnectDelaySeconds:F0}s...";
+                        SetLoginState(LoginState.WaitingCooldown, $"Server notice received. Retrying in {BotConfigManager.Current.AutoReconnectDelaySeconds:F0}s...", now);
                         return true;
                     }
                     return true;
@@ -201,18 +191,14 @@ namespace RebuildBotPlugin.Controllers
                     {
                         // Server error popup
                         disconnectDetectedTime = now;
-                        State = LoginState.WaitingCooldown;
                         CurrentAttempt++;
-                        lastStateChangeTime = now;
-                        StatusText = $"Login error. Retrying in {BotConfigManager.Current.AutoReconnectDelaySeconds:F0}s...";
+                        SetLoginState(LoginState.WaitingCooldown, $"Login error. Retrying in {BotConfigManager.Current.AutoReconnectDelaySeconds:F0}s...", now);
                         return true;
                     }
 
                     if (titleScreen.CharacterSelectWindow != null && titleScreen.CharacterSelectWindow.gameObject.activeSelf)
                     {
-                        State = LoginState.SelectingCharacter;
-                        lastStateChangeTime = now;
-                        StatusText = "Character select screen ready.";
+                        SetLoginState(LoginState.SelectingCharacter, "Character select screen ready.", now);
                         return true;
                     }
 
@@ -220,10 +206,8 @@ namespace RebuildBotPlugin.Controllers
                     if (now - lastStateChangeTime > 10.0f)
                     {
                         disconnectDetectedTime = now;
-                        State = LoginState.WaitingCooldown;
                         CurrentAttempt++;
-                        lastStateChangeTime = now;
-                        StatusText = $"Login request timed out. Retrying in {BotConfigManager.Current.AutoReconnectDelaySeconds:F0}s...";
+                        SetLoginState(LoginState.WaitingCooldown, $"Login request timed out. Retrying in {BotConfigManager.Current.AutoReconnectDelaySeconds:F0}s...", now);
                         return true;
                     }
                     return true;
@@ -255,9 +239,7 @@ namespace RebuildBotPlugin.Controllers
 
                             BotEngine.Instance?.LogEvent($"[Login] Entering world with selected character slot ({targetSlot})...");
                             titleScreen.CharacterSelectWindow.ClickOk();
-                            State = LoginState.AwaitingWorldEntry;
-                            lastStateChangeTime = now;
-                            StatusText = "Entering world...";
+                            SetLoginState(LoginState.AwaitingWorldEntry, "Entering world...", now);
                         }
                         return true;
                     }
@@ -269,9 +251,8 @@ namespace RebuildBotPlugin.Controllers
                     if (now - lastStateChangeTime > 15.0f)
                     {
                         disconnectDetectedTime = now;
-                        State = LoginState.WaitingCooldown;
                         CurrentAttempt++;
-                        lastStateChangeTime = now;
+                        SetLoginState(LoginState.WaitingCooldown, $"World entry timed out. Reconnecting...", now);
                     }
                     return true;
             }

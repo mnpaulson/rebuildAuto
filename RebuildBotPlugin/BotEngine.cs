@@ -66,9 +66,92 @@ namespace RebuildBotPlugin
             Instance = this;
         }
 
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr GetActiveWindow();
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
         private void Start()
         {
+            if (Services.ProfileManager.HiddenCliFlag)
+            {
+                try
+                {
+                    IntPtr hwnd = GetActiveWindow();
+                    if (hwnd != IntPtr.Zero)
+                    {
+                        ShowWindow(hwnd, 0);
+                    }
+                }
+                catch { }
+            }
+
+            EmitInitialStartupStatus();
             LogEvent("Bot engine initialized (modular architecture).");
+        }
+
+        private void EmitInitialStartupStatus()
+        {
+            try
+            {
+                string profileName = string.IsNullOrEmpty(Services.ProfileManager.ActiveProfileName) ? "Default" : Services.ProfileManager.ActiveProfileName;
+                var statusObj = new
+                {
+                    Profile = profileName,
+                    CharacterName = profileName,
+                    JobName = "Starting Up...",
+                    Level = 0,
+                    JobLevel = 0,
+                    Hp = 1,
+                    MaxHp = 1,
+                    Sp = 1,
+                    MaxSp = 1,
+                    Weight = 0,
+                    MaxWeight = 1,
+                    Zeny = 0,
+                    CurrentMap = "",
+                    PositionX = 0,
+                    PositionY = 0,
+                    BotState = "Launching",
+                    IsBotEnabled = BotConfigManager.Current.Enabled,
+                    BaseExp = 0L,
+                    MaxBaseExp = 1L,
+                    BaseExpPerHour = 0.0,
+                    JobExpPerHour = 0.0,
+                    SessionBaseExpGained = 0L,
+                    SessionJobExpGained = 0L,
+                    MonstersKilled = 0,
+                    SessionUptimeSeconds = 0.0,
+                    HasActiveMacro = false,
+                    CurrentMacro = "",
+                    ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
+                    Timestamp = DateTime.UtcNow
+                };
+
+                var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                string json = System.Text.Json.JsonSerializer.Serialize(statusObj, options);
+
+                string path = Services.ProfileManager.GetBotStatusPath();
+                string dir = System.IO.Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(dir) && !System.IO.Directory.Exists(dir))
+                {
+                    System.IO.Directory.CreateDirectory(dir);
+                }
+
+                System.IO.File.WriteAllText(path, json);
+            }
+            catch { }
+        }
+
+        public void ForceEmitStatus()
+        {
+            var netManager = NetworkManager.Instance;
+            ServerControllable player = null;
+            if (netManager != null && netManager.EntityList != null)
+            {
+                netManager.EntityList.TryGetValue(netManager.PlayerId, out player);
+            }
+            EmitBotStatus(Time.time, player, netManager, force: true);
         }
 
         public string GetCurrentMapName() => NetworkManager.Instance?.CurrentMap ?? "";
@@ -97,8 +180,20 @@ namespace RebuildBotPlugin
             }
         }
 
+        private float lastStatusEmitTime = 0f;
+
         private void LateUpdate()
         {
+            float now = Time.time;
+            var netManager = NetworkManager.Instance;
+            ServerControllable player = null;
+            if (netManager != null && netManager.EntityList != null)
+            {
+                netManager.EntityList.TryGetValue(netManager.PlayerId, out player);
+            }
+
+            EmitBotStatus(now, player, netManager);
+
             if (MinimapMarker == null) return;
 
             if (CurrentState != lastLoggedState)
@@ -112,6 +207,102 @@ namespace RebuildBotPlugin
                 BotConfigManager.Current.AutoWander,
                 CurrentState,
                 Navigation.CurrentExplorationWaypoint);
+        }
+
+        private void EmitBotStatus(float now, ServerControllable player, NetworkManager netManager, bool force = false)
+        {
+            if (!force && now - lastStatusEmitTime < 1.0f) return;
+            lastStatusEmitTime = now;
+
+            try
+            {
+                var state = PlayerState.Instance;
+                var tracker = ExpTracker;
+                string profileName = string.IsNullOrEmpty(Services.ProfileManager.ActiveProfileName) ? "Default" : Services.ProfileManager.ActiveProfileName;
+
+                string jobName = "Novice";
+                int jobLevel = 1;
+                if (state != null)
+                {
+                    jobLevel = state.GetData(RebuildSharedData.Enum.EntityStats.PlayerStat.JobLevel);
+                    if (Assets.Scripts.Sprites.ClientDataLoader.Instance != null)
+                    {
+                        jobName = Assets.Scripts.Sprites.ClientDataLoader.Instance.GetJobNameForId(state.JobId) ?? $"Job {state.JobId}";
+                    }
+                }
+
+                string botStateStr = CurrentState.ToString();
+                string jobDisplayStr = jobName;
+
+                if (player == null || string.IsNullOrEmpty(netManager?.CurrentMap))
+                {
+                    if (Login.IsActive)
+                    {
+                        botStateStr = Login.State switch
+                        {
+                            LoginState.SubmittingLogin => "SubmittingLogin",
+                            LoginState.SelectingCharacter => "SelectingCharacter",
+                            LoginState.AwaitingCharacterSelect => "AwaitingCharSelect",
+                            LoginState.AwaitingWorldEntry => "EnteringWorld",
+                            LoginState.DismissingNotice => "DismissingNotice",
+                            LoginState.WaitingCooldown => "Reconnecting",
+                            _ => "LoggingIn"
+                        };
+                        jobDisplayStr = !string.IsNullOrWhiteSpace(Login.StatusText) ? Login.StatusText : "Logging In...";
+                    }
+                    else
+                    {
+                        botStateStr = "Connecting";
+                        jobDisplayStr = "Connecting to Server...";
+                    }
+                }
+
+                var statusObj = new
+                {
+                    Profile = profileName,
+                    CharacterName = player != null ? player.Name : (state != null ? state.PlayerName : profileName),
+                    JobName = jobDisplayStr,
+                    Level = player != null ? player.Level : (state != null ? state.Level : 0),
+                    JobLevel = jobLevel,
+                    Hp = player != null ? player.Hp : (state != null ? state.Hp : 0),
+                    MaxHp = player != null ? player.MaxHp : (state != null ? state.MaxHp : 1),
+                    Sp = player != null ? player.Sp : (state != null ? state.Sp : 0),
+                    MaxSp = player != null ? player.MaxSp : (state != null ? state.MaxSp : 1),
+                    Weight = state != null ? state.CurrentWeight : 0,
+                    MaxWeight = state != null ? state.MaxWeight : 1,
+                    Zeny = state != null ? state.Zeny : 0,
+                    CurrentMap = netManager != null ? netManager.CurrentMap : "",
+                    PositionX = player != null ? player.CellPosition.x : 0,
+                    PositionY = player != null ? player.CellPosition.y : 0,
+                    BotState = botStateStr,
+                    IsBotEnabled = BotConfigManager.Current.Enabled,
+                    BaseExp = tracker.CurrentBaseExp,
+                    MaxBaseExp = tracker.MaxBaseExp,
+                    BaseExpPerHour = tracker.BaseExpPerHour,
+                    JobExpPerHour = tracker.JobExpPerHour,
+                    SessionBaseExpGained = tracker.SessionBaseExpGained,
+                    SessionJobExpGained = tracker.SessionJobExpGained,
+                    MonstersKilled = Combat.KillCount,
+                    SessionUptimeSeconds = tracker.ElapsedTime.TotalSeconds,
+                    HasActiveMacro = Macro.HasActiveMacro,
+                    CurrentMacro = Macro.CurrentAction != null ? Macro.CurrentAction.Description : "",
+                    ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
+                    Timestamp = DateTime.UtcNow
+                };
+
+                var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                string json = System.Text.Json.JsonSerializer.Serialize(statusObj, options);
+
+                string path = Services.ProfileManager.GetBotStatusPath();
+                string dir = System.IO.Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(dir) && !System.IO.Directory.Exists(dir))
+                {
+                    System.IO.Directory.CreateDirectory(dir);
+                }
+
+                System.IO.File.WriteAllText(path, json);
+            }
+            catch { }
         }
 
         private void OnTeleportReset()

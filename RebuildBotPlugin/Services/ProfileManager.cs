@@ -15,6 +15,7 @@ namespace RebuildBotPlugin.Services
         public static string ExplicitCliProfile { get; private set; }
         public static string ExplicitCliAccount { get; private set; }
         public static bool LowSpecCliFlag { get; private set; } = false;
+        public static bool HiddenCliFlag { get; private set; } = false;
         public static int? TargetFpsCli { get; private set; }
 
         public const string DevBaseDirectory = @"c:\dev\rebuildAuto\RebuildBotPlugin";
@@ -56,6 +57,11 @@ namespace RebuildBotPlugin.Services
                                  arg.Equals("--lowspec", StringComparison.OrdinalIgnoreCase))
                         {
                             LowSpecCliFlag = true;
+                        }
+                        else if (arg.Equals("-hidden", StringComparison.OrdinalIgnoreCase) ||
+                                 arg.Equals("--hidden", StringComparison.OrdinalIgnoreCase))
+                        {
+                            HiddenCliFlag = true;
                         }
                         else if ((arg.Equals("-fps", StringComparison.OrdinalIgnoreCase) ||
                                   arg.Equals("--fps", StringComparison.OrdinalIgnoreCase)) &&
@@ -121,6 +127,10 @@ namespace RebuildBotPlugin.Services
             if (forceReloadConfig)
             {
                 BotConfigManager.LoadConfig();
+                if (!string.IsNullOrWhiteSpace(ExplicitCliProfile))
+                {
+                    BotConfigManager.Current.Enabled = true;
+                }
             }
         }
 
@@ -171,6 +181,34 @@ namespace RebuildBotPlugin.Services
 
             if (Directory.Exists(DevBaseDirectory)) return profileStatusDev;
             return profileStatusGame;
+        }
+
+        public static string GetBotStatusPath()
+        {
+            if (string.IsNullOrWhiteSpace(ActiveProfileName))
+            {
+                return GetDefaultOrFallbackPath("bot_status.json");
+            }
+
+            string profileStatusDev = Path.Combine(DevBaseDirectory, "profiles", ActiveProfileName, "bot_status.json");
+            string profileStatusGame = Path.Combine(GameBaseDirectory, "profiles", ActiveProfileName, "bot_status.json");
+
+            if (Directory.Exists(DevBaseDirectory)) return profileStatusDev;
+            return profileStatusGame;
+        }
+
+        public static string GetLogPath()
+        {
+            if (string.IsNullOrWhiteSpace(ActiveProfileName))
+            {
+                return GetDefaultOrFallbackPath("bot.log");
+            }
+
+            string profileLogDev = Path.Combine(DevBaseDirectory, "profiles", ActiveProfileName, "bot.log");
+            string profileLogGame = Path.Combine(GameBaseDirectory, "profiles", ActiveProfileName, "bot.log");
+
+            if (Directory.Exists(DevBaseDirectory)) return profileLogDev;
+            return profileLogGame;
         }
 
         private static string GetDefaultOrFallbackPath(string fileName)

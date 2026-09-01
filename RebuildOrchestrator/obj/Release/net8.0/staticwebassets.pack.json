@@ -1,0 +1,33 @@
+{
+  "Files": [
+    {
+      "Id": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\css\\dashboard.css",
+      "PackagePath": "staticwebassets\\css\\dashboard.css"
+    },
+    {
+      "Id": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\index.html",
+      "PackagePath": "staticwebassets\\index.html"
+    },
+    {
+      "Id": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\js\\app.js",
+      "PackagePath": "staticwebassets\\js\\app.js"
+    },
+    {
+      "Id": "obj\\Release\\net8.0\\staticwebassets\\msbuild.RebuildOrchestrator.Microsoft.AspNetCore.StaticWebAssets.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
+    },
+    {
+      "Id": "obj\\Release\\net8.0\\staticwebassets\\msbuild.build.RebuildOrchestrator.props",
+      "PackagePath": "build\\RebuildOrchestrator.props"
+    },
+    {
+      "Id": "obj\\Release\\net8.0\\staticwebassets\\msbuild.buildMultiTargeting.RebuildOrchestrator.props",
+      "PackagePath": "buildMultiTargeting\\RebuildOrchestrator.props"
+    },
+    {
+      "Id": "obj\\Release\\net8.0\\staticwebassets\\msbuild.buildTransitive.RebuildOrchestrator.props",
+      "PackagePath": "buildTransitive\\RebuildOrchestrator.props"
+    }
+  ],
+  "ElementsToRemove": []
+}
