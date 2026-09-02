@@ -1,6 +1,6 @@
 {
   "Version": 1,
-  "Hash": "qQW/NEgYte7kHjsGKUIbODEPMsGcS6r8C/RwrriEB+k=",
+  "Hash": "QFA15CdMIgftpLOuG+WL6P6kXxWKlp3y5CjXGskbPwE=",
   "Source": "RebuildOrchestrator",
   "BasePath": "_content/RebuildOrchestrator",
   "Mode": "Default",
@@ -72,6 +72,44 @@
       "CopyToOutputDirectory": "Never",
       "CopyToPublishDirectory": "PreserveNewest",
       "OriginalItemSpec": "wwwroot\\js\\app.js"
+    },
+    {
+      "Identity": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\js\\config_editor.js",
+      "SourceId": "RebuildOrchestrator",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\",
+      "BasePath": "_content/RebuildOrchestrator",
+      "RelativePath": "js/config_editor.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\js\\config_editor.js"
+    },
+    {
+      "Identity": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\js\\config_schema.js",
+      "SourceId": "RebuildOrchestrator",
+      "SourceType": "Discovered",
+      "ContentRoot": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\",
+      "BasePath": "_content/RebuildOrchestrator",
+      "RelativePath": "js/config_schema.js",
+      "AssetKind": "All",
+      "AssetMode": "All",
+      "AssetRole": "Primary",
+      "AssetMergeBehavior": "PreferTarget",
+      "AssetMergeSource": "",
+      "RelatedAsset": "",
+      "AssetTraitName": "",
+      "AssetTraitValue": "",
+      "CopyToOutputDirectory": "Never",
+      "CopyToPublishDirectory": "PreserveNewest",
+      "OriginalItemSpec": "wwwroot\\js\\config_schema.js"
     }
   ]
 }

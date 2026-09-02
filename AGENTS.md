@@ -210,3 +210,55 @@ Outputs structured JSON status for LLM and Orchestrator monitoring:
 }
 ```
 
+---
+
+## 8. Extensible Bot Configuration Architecture (`bot_config.json`)
+
+The Fleet Orchestrator provides an interactive, tabbed visual editor for `bot_config.json` powered by a **Declarative Schema Engine** (`config_schema.js` & `config_editor.js`).
+
+### A. Core Architecture
+- **No Hardcoded HTML for Settings**: All configuration settings are defined declaratively in `RebuildOrchestrator/wwwroot/js/config_schema.js`.
+- **Automatic Form Generation**: The UI renderer (`config_editor.js`) dynamically constructs categorized tabs, inputs, sliders, toggles, searchable tables, and tooltips directly from the schema.
+- **Bi-Directional Synchronization**: The editor supports both a visual form and a raw JSON view with synchronized state. Any unmapped or custom JSON properties are preserved upon saving.
+
+### B. Schema Definition Contract
+Each setting in `config_schema.js` is defined as an object:
+```javascript
+{
+  id: "EmergencyFlyWingHpPercent",       // Exact JSON property name matching BotConfigData in C#
+  label: "Emergency Wing HP %",          // Human-readable title
+  description: "Uses a Fly Wing when HP drops below this threshold.", // Tooltip / subtitle
+  category: "Survival",                  // Tab: Combat, Survival, Town, Monsters, Progression, System
+  type: "percent",                       // Widget type: boolean | percent | number | select | tag-list | custom
+  min: 0,                                // (Optional) Numeric minimum
+  max: 100,                              // (Optional) Numeric maximum
+  step: 1,                               // (Optional) Stepper increment
+  unit: "%",                             // (Optional) Unit label
+  default: 20,                           // Default fallback value
+  options: ["Auto", "Awakening"]         // (Optional) Dropdown choices for type: "select"
+}
+```
+
+### C. Developer Guide: How to Add a New Configuration Setting
+When adding a new configuration option to the bot:
+1. **Define in C#**: Add the property with default value in `RebuildBotPlugin/BotConfig.cs` (`BotConfigData` class):
+   ```csharp
+   public int AutoTeleportOnPlayerCount { get; set; } = 3;
+   ```
+2. **Register in Schema**: Add a single descriptor object to `RebuildOrchestrator/wwwroot/js/config_schema.js` under the appropriate category:
+   ```javascript
+   {
+     id: "AutoTeleportOnPlayerCount",
+     label: "Teleport on Nearby Players",
+     description: "Wings away if more than N unknown players are nearby.",
+     category: "Survival",
+     type: "number",
+     min: 0,
+     max: 10,
+     step: 1,
+     default: 0
+   }
+   ```
+3. **Done!** The setting will immediately and automatically appear in the dashboard's configuration modal under the chosen tab with full validation, tooltip, and two-way JSON saving.
+
+

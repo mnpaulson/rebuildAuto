@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("RebuildOrchestrator")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+11a1c5be9f76eb8d3ca272b7a3a5031c43752960")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+25220c909ad18f343fa70a64cb7e2c2d7ad40db3")]
 [assembly: System.Reflection.AssemblyProductAttribute("RebuildOrchestrator")]
 [assembly: System.Reflection.AssemblyTitleAttribute("RebuildOrchestrator")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

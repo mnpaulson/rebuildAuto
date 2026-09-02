@@ -91,7 +91,6 @@
   "AutoRestockOnLowSupplies": true,
   "RestockTargets": {},
   "SearchRadius": 18,
-  "AttackRange": 2,
   "AttackCooldownSeconds": 0.4,
   "LootCooldownSeconds": 0.3,
   "WanderCooldownSeconds": 4,

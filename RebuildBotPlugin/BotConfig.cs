@@ -45,7 +45,6 @@ namespace RebuildBotPlugin
             ["Concentration_Potion"] = 3
         };
         public float SearchRadius { get; set; } = 18.0f;
-        public float AttackRange { get; set; } = 2.0f;
         public float AttackCooldownSeconds { get; set; } = 0.4f;
         public float LootCooldownSeconds { get; set; } = 0.3f;
         public float WanderCooldownSeconds { get; set; } = 4.0f;

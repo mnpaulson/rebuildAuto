@@ -13,6 +13,14 @@
       "PackagePath": "staticwebassets\\js\\app.js"
     },
     {
+      "Id": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\js\\config_editor.js",
+      "PackagePath": "staticwebassets\\js\\config_editor.js"
+    },
+    {
+      "Id": "C:\\dev\\rebuildAuto\\RebuildOrchestrator\\wwwroot\\js\\config_schema.js",
+      "PackagePath": "staticwebassets\\js\\config_schema.js"
+    },
+    {
       "Id": "obj\\Release\\net8.0\\staticwebassets\\msbuild.RebuildOrchestrator.Microsoft.AspNetCore.StaticWebAssets.props",
       "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
     },

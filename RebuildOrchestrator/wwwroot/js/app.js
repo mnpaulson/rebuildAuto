@@ -778,22 +778,24 @@ function submitMacro() {
 
 // Config Modal Logic
 function openConfigModal(profileName) {
-  document.getElementById('config-profile-target').value = profileName;
-  document.getElementById('config-modal-title').textContent = `Configuration - ${profileName}`;
-
   fetch(`/api/bot/${encodeURIComponent(profileName)}/config`)
     .then(r => r.text())
     .then(rawText => {
+      let parsed = {};
       try {
-        const parsed = JSON.parse(rawText);
-        document.getElementById('config-json-editor').value = JSON.stringify(parsed, null, 2);
+        parsed = JSON.parse(rawText);
       } catch {
-        document.getElementById('config-json-editor').value = rawText || '{}';
+        parsed = {};
+      }
+      if (typeof initConfigEditor === 'function') {
+        initConfigEditor(profileName, parsed);
       }
       document.getElementById('config-modal').classList.add('open');
     })
     .catch(err => {
-      document.getElementById('config-json-editor').value = '{}';
+      if (typeof initConfigEditor === 'function') {
+        initConfigEditor(profileName, {});
+      }
       document.getElementById('config-modal').classList.add('open');
     });
 }
