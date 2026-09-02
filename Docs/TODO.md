@@ -1,0 +1,1 @@
+Invesitgate better reconnection handling. Particularily when the client shows: "Error: Could not connect to server at address. (Press space to try to reconnect)"

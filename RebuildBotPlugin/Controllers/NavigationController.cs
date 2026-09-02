@@ -232,13 +232,13 @@ namespace RebuildBotPlugin.Controllers
                 // 2. Obstacle or corner between current position and destination:
                 // Use MapNavMesh to extract route waypoints around walls and corridors
                 var blockedIndices = (avoidPortals && (targetWarp != null || exactHitboxOnly))
-                    ? WorldGraph.Instance.GetMapPortalTileIndices(netManager.CurrentMap, walkData.Width, targetWarp)
+                    ? WorldGraph.Instance.GetMapPortalTileIndices(netManager.CurrentMap, walkData.Width, targetWarp, padding: 1)
                     : null;
                 var routeWaypoints = MapNavMesh.Instance.FindRouteWaypoints(currentPos, destination, hopDistance, blockedIndices);
                 if (routeWaypoints != null && routeWaypoints.Count > 0)
                 {
                     Vector2Int stepTarget = routeWaypoints[0];
-                    if (SafeMoveTowards(currentPos, stepTarget, avoidPortals, forwardOnly: false, out dispatchedStep, targetWarp, exactHitboxOnly))
+                    if (SafeMoveTowards(currentPos, stepTarget, avoidPortals, forwardOnly: true, out dispatchedStep, targetWarp, exactHitboxOnly))
                         return true;
                 }
             }
@@ -283,60 +283,60 @@ namespace RebuildBotPlugin.Controllers
                 Vector2 dir = destination - currentPos;
                 float totalDist = dir.magnitude;
 
-                // 1. If destination is close (within 14 tiles), check if directly reachable
-                int chebyshevDist = Math.Max(Math.Abs(destination.x - currentPos.x), Math.Abs(destination.y - currentPos.y));
-                if (totalDist <= 14f && chebyshevDist <= 15)
-                {
-                    Vector2Int directTarget = destination;
-                    bool directWalkable = walkData.CellWalkable(destination.x, destination.y);
+                // 1. Direct step towards destination (up to 11 tiles)
+                int directStepDist = Mathf.Min(11, Mathf.RoundToInt(totalDist));
+                Vector2Int directTarget = (totalDist <= 11f)
+                    ? destination
+                    : currentPos + Vector2Int.RoundToInt(dir.normalized * directStepDist);
 
-                    if (!directWalkable)
+                bool directWalkable = walkData.CellWalkable(directTarget.x, directTarget.y);
+                if (!directWalkable && totalDist <= 11f)
+                {
+                    // Check 8 adjacent neighbor cells around destination to find a walkable tile
+                    float bestNeighborDist = float.MaxValue;
+                    for (int dx = -1; dx <= 1; dx++)
                     {
-                        // Check 8 adjacent neighbor cells around destination to find a walkable tile
-                        float bestNeighborDist = float.MaxValue;
-                        for (int dx = -1; dx <= 1; dx++)
+                        for (int dy = -1; dy <= 1; dy++)
                         {
-                            for (int dy = -1; dy <= 1; dy++)
+                            if (dx == 0 && dy == 0) continue;
+                            int nx = destination.x + dx;
+                            int ny = destination.y + dy;
+                            if (nx >= 0 && ny >= 0 && nx < walkData.Width && ny < walkData.Height && walkData.CellWalkable(nx, ny))
                             {
-                                if (dx == 0 && dy == 0) continue;
-                                int nx = destination.x + dx;
-                                int ny = destination.y + dy;
-                                if (nx >= 0 && ny >= 0 && nx < walkData.Width && ny < walkData.Height && walkData.CellWalkable(nx, ny))
+                                float d = Vector2.Distance(currentPos, new Vector2(nx, ny));
+                                if (d < bestNeighborDist)
                                 {
-                                    float d = Vector2.Distance(currentPos, new Vector2(nx, ny));
-                                    if (d < bestNeighborDist)
-                                    {
-                                        bestNeighborDist = d;
-                                        directTarget = new Vector2Int(nx, ny);
-                                        directWalkable = true;
-                                    }
+                                    bestNeighborDist = d;
+                                    directTarget = new Vector2Int(nx, ny);
+                                    directWalkable = true;
                                 }
                             }
                         }
                     }
+                }
 
-                    if (directWalkable)
+                int chebyshevDist = Math.Max(Math.Abs(directTarget.x - currentPos.x), Math.Abs(directTarget.y - currentPos.y));
+                if (directWalkable && chebyshevDist <= 12 && !IsTilePortalBlocked(directTarget))
+                {
+                    var blockedIndices = (avoidPortals && (targetWarp != null || exactHitboxOnly))
+                        ? WorldGraph.Instance.GetMapPortalTileIndices(netManager.CurrentMap, walkData.Width, targetWarp, padding: 1)
+                        : null;
+
+                    if (MapNavMesh.HasSafeLineOfSight(currentPos, directTarget, walkData, blockedIndices))
                     {
-                        var blockedIndices = (avoidPortals && (targetWarp != null || exactHitboxOnly))
-                            ? WorldGraph.Instance.GetMapPortalTileIndices(netManager.CurrentMap, walkData.Width, targetWarp, padding: 1)
-                            : null;
-
-                        if (MapNavMesh.HasSafeLineOfSight(currentPos, directTarget, walkData, blockedIndices))
-                        {
-                            netManager.MovePlayer(directTarget);
-                            dispatchedStep = directTarget;
-                            return true;
-                        }
+                        netManager.MovePlayer(directTarget);
+                        dispatchedStep = directTarget;
+                        return true;
                     }
                 }
 
                 // 2. Multi-angle progressive distance probe towards destination
                 float baseAngle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
                 float[] angleOffsets = forwardOnly
-                    ? new float[] { 0f, 20f, -20f, 40f, -40f }
-                    : new float[] { 0f, 20f, -20f, 40f, -40f, 60f, -60f, 80f, -80f };
+                    ? new float[] { 0f, 15f, -15f, 30f, -30f }
+                    : new float[] { 0f, 15f, -15f, 30f, -30f, 45f, -45f };
 
-                int maxStep = Mathf.Clamp(Mathf.RoundToInt(totalDist), 3, 12);
+                int maxStep = Mathf.Clamp(Mathf.RoundToInt(totalDist), 3, 11);
                 int[] stepDistances = (maxStep >= 10)
                     ? new int[] { maxStep, 8, 6, 4, 2 }
                     : (maxStep >= 6)
@@ -357,6 +357,10 @@ namespace RebuildBotPlugin.Controllers
 
                         if (candidate == currentPos) continue;
                         if (candidate.x < 0 || candidate.y < 0 || candidate.x >= walkData.Width || candidate.y >= walkData.Height) continue;
+
+                        // Candidate must make forward progress towards destination (never step sideways or backwards)
+                        float candDist = Vector2.Distance(candidate, destination);
+                        if (candDist >= totalDist - 0.2f) continue;
 
                         if (avoidPortals && IsTilePortalBlocked(candidate))
                             continue;
@@ -760,7 +764,7 @@ namespace RebuildBotPlugin.Controllers
                 }
 
                 currentState = BotState.TravelingToTargetMap;
-                if (SafeMoveTowards(player.CellPosition, targetWp, avoidPortals: true, forwardOnly: false, out Vector2Int stepDispatched, targetWarp: activeTravelWarp))
+                if (SafeMoveTowards(player.CellPosition, targetWp, avoidPortals: true, forwardOnly: true, out Vector2Int stepDispatched, targetWarp: activeTravelWarp))
                 {
                     currentTravelStepTarget = stepDispatched;
                     lastTravelTime = now;

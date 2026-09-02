@@ -87,14 +87,24 @@ public class WorldGraph
 
 ---
 
-## 4. Tile-Level Pathfinding (`RagnarokWalkData`)
+## 4. Tile-Level Pathfinding (`RagnarokWalkData` & `MapNavMesh`)
 
 - **Walkable Check**:
   ```csharp
   bool isWalkable = (walkData.Cell(pos).Type & CellType.Walkable) == CellType.Walkable;
   ```
-- **A* Path Execution**:
-  Uses `Pathfinder.BuildPath(walkData, startCell, targetCell)` to generate step-by-step waypoint paths.
+- **Local Grid A*** (`MapNavMesh.FindPath`):
+  Uses a custom, fast min-heap grid A* over `RoWalkDataProvider` cells, supporting `blockedIndices` to treat non-target portal hitboxes as impassable obstacles.
+- **Line-of-Sight Waypoint Pruning (`MapNavMesh.FindRouteWaypoints`)**:
+  Rather than naive fixed-distance hopping (`i += 11`), waypoints are extracted using `HasSafeLineOfSight`:
+  - Scans ahead along the full path up to `hopDistance` (11 tiles).
+  - Validates full Bresenham line clearance against both `CellWalkable` and `blockedIndices`.
+  - Places intermediate waypoints **at every corner turn**, preventing `MovePlayer` from cutting diagonally across obstacles or doorway portals.
+- **Server Movement Independence**:
+  `NetworkManager.MovePlayer(Vector2Int dest)` transmits only a single destination coordinate to the server. The server runs its own internal pathfinder without portal avoidance knowledge. Thus, the client must never dispatch a step around a corner or past a doorway.
+- **Radial Portal Hitbox Math & Safety Padding**:
+  Server warps create hitboxes with radius: `MinX = FromX - Width, MaxX = FromX + Width, MinY = FromY - Height, MaxY = FromY + Height`.
+  Non-target portals use a **1-tile safety padding (`padding = 1`)** to ensure edge cells bordering doorways (e.g. `(100, 155)` / `(101, 154)`) are strictly blocked from diagonal movement.
 
 ---
 

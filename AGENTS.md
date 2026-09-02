@@ -125,6 +125,24 @@ dotnet build RebuildBotPlugin/RebuildBotPlugin.csproj -c Release -p:DeployOnBuil
   - **Default (Orchestrator Mode)**: Logs are written to `profiles/<CharacterName>/bot.log` with a single timestamp `[yyyy-MM-dd HH:mm:ss]` for real-time streaming into the Fleet Orchestrator dashboard. BepInEx terminal logging is bypassed to eliminate console I/O overhead.
   - **BepInEx Logging Mode**: When launched with the `-bepinexlog` CLI flag, logs route to the BepInEx terminal console (`Instance?.Log.LogInfo`) instead.
 
+### I. Local Navigation, Portal Avoidance & Corner Cutting
+- **Server Movement Packet Independence**:
+  `NetworkManager.MovePlayer(Vector2Int dest)` only sends a *single* target coordinate packet to the server. The server computes its *own* path to `dest`.
+  - The server has **no knowledge of doorways, portals, or client waypoints**—floor portals are walkable tiles with invisible touch triggers.
+  - **Golden Rule**: Never dispatch a destination coordinate around a corner or past a doorway. If you dispatch a waypoint behind a corner, the server's pathfinder will cut diagonally across the corner, triggering nearby doorway portals!
+- **Server Warp Trigger Area Math**:
+  In `RoRebuildServer`, `Warp(map, id, x, y, width, height, ...)` constructs touch hitboxes using `Area.CreateAroundPoint(spawn.Position, spawn.Width, spawn.Height)`:
+  - `MinX = FromX - Width`, `MaxX = FromX + Width`
+  - `MinY = FromY - Height`, `MaxY = FromY + Height`
+  Hitbox triggers are **radial**, not offset! A warp at `(98, 153)` with `w: 2, h: 2` spans `[96..100, 151..155]`.
+  - Non-target portals require a **1-tile safety buffer (`padding = 1`)** (`[95..101, 150..156]`) to block edge tiles adjacent to doorways from triggering diagonal corner cuts.
+- **Line-of-Sight Waypoint Extraction (`MapNavMesh.FindRouteWaypoints`)**:
+  - Never downsample grid paths by blindly skipping $N$ tiles (`fullPath[i += 11]`). Blind hopping discards 90° turns and places waypoints behind walls/doorways.
+  - Always use **Bresenham Line-of-Sight Pruning** (`HasSafeLineOfSight`): Scan ahead along `fullPath` and place waypoints **at each corner** so the character moves cleanly to the turn before changing direction.
+- **IL2CPP Managed Array Marshalling Gotcha**:
+  - Passing managed C# arrays (e.g. `Vector2Int[] tempPath`) into IL2CPP methods (e.g. `Pathfinder.GetPath`) invokes implicit conversion operators that allocate a temporary native array and do **not** write results back to the managed array.
+  - Never rely on IL2CPP out-parameter arrays for safety checks. Always use pure managed C# algorithms (like `MapNavMesh.HasSafeLineOfSight`) for tile line tracing and portal avoidance.
+
 ---
 
 ## 5. Hotkeys & In-Game Controls
