@@ -34,3 +34,13 @@
 [2026-09-01 18:37:41] [Profile] No CLI profile specified. Running in default root profile mode.
 [2026-09-01 18:37:41] [Accounts] Loaded 3 account(s) from 'accounts.json'.
 [2026-09-01 18:37:41] [18:37:41] Bot engine initialized (modular architecture).
+[2026-09-02 11:31:28] [Profile] No CLI profile specified. Running in default root profile mode.
+[2026-09-02 11:31:28] [Accounts] Loaded 3 account(s) from 'accounts.json'.
+[2026-09-02 11:31:28] Plugin com.rebuild.automation is loading (IL2CPP)...
+[2026-09-02 11:31:28] [WorldGraph] Successfully loaded 1742 embedded warp portals across 242 maps.
+[2026-09-02 11:31:28] [WorldGraph] Baked comprehensive Kafra teleport network into world graph.
+[2026-09-02 11:31:28] Harmony patches applied successfully.
+[2026-09-02 11:31:28] Rebuild Automation Bot initialized successfully!
+[2026-09-02 11:31:28] Bot engine initialized (modular architecture).
+[2026-09-02 11:34:25] Toggled Bot (F10): ON
+[2026-09-02 11:34:25] [Profile] In-game character identified as 'Test-Archer'. Switching active profile...

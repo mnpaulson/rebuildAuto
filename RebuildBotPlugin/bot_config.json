@@ -1,5 +1,5 @@
 {
-  "Enabled": false,
+  "Enabled": true,
   "AutoAttack": true,
   "AutoLoot": true,
   "AutoWander": true,
@@ -89,6 +89,8 @@
   "AutoReturnOnOutOfHpItems": true,
   "AutoRestock": true,
   "AutoRestockOnLowSupplies": true,
+  "AutoEquipBestArrow": true,
+  "MinArrowCount": 30,
   "RestockTargets": {},
   "SearchRadius": 18,
   "AttackCooldownSeconds": 0.4,

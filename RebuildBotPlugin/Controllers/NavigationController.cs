@@ -199,12 +199,12 @@ namespace RebuildBotPlugin.Controllers
         /// Unified route navigator: verifies direct line-of-sight first; if obstructed by a wall or corner,
         /// calculates the global A* topological path via MapNavMesh and steps along waypoints.
         /// </summary>
-        public bool NavigateTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals = false, int hopDistance = 10)
+        public bool NavigateTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals = false, int hopDistance = 10, WarpConnection targetWarp = null, bool exactHitboxOnly = false)
         {
-            return NavigateTowards(currentPos, destination, avoidPortals, hopDistance, out _);
+            return NavigateTowards(currentPos, destination, avoidPortals, hopDistance, out _, targetWarp, exactHitboxOnly);
         }
 
-        public bool NavigateTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals, int hopDistance, out Vector2Int dispatchedStep)
+        public bool NavigateTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals, int hopDistance, out Vector2Int dispatchedStep, WarpConnection targetWarp = null, bool exactHitboxOnly = false)
         {
             dispatchedStep = Vector2Int.zero;
             if (currentPos == destination) return true;
@@ -224,30 +224,35 @@ namespace RebuildBotPlugin.Controllers
                     int directSteps = Pathfinder.GetPath(walkData, currentPos, destination, tempPath);
                     if (directSteps > 0)
                     {
-                        return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly: true, out dispatchedStep);
+                        if (SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly: true, out dispatchedStep, targetWarp, exactHitboxOnly))
+                            return true;
                     }
                 }
 
                 // 2. Obstacle or corner between current position and destination:
                 // Use MapNavMesh to extract route waypoints around walls and corridors
-                var routeWaypoints = MapNavMesh.Instance.FindRouteWaypoints(currentPos, destination, hopDistance);
+                var blockedIndices = (avoidPortals && (targetWarp != null || exactHitboxOnly))
+                    ? WorldGraph.Instance.GetMapPortalTileIndices(netManager.CurrentMap, walkData.Width, targetWarp)
+                    : null;
+                var routeWaypoints = MapNavMesh.Instance.FindRouteWaypoints(currentPos, destination, hopDistance, blockedIndices);
                 if (routeWaypoints != null && routeWaypoints.Count > 0)
                 {
                     Vector2Int stepTarget = routeWaypoints[0];
-                    return SafeMoveTowards(currentPos, stepTarget, avoidPortals, forwardOnly: false, out dispatchedStep);
+                    if (SafeMoveTowards(currentPos, stepTarget, avoidPortals, forwardOnly: false, out dispatchedStep, targetWarp, exactHitboxOnly))
+                        return true;
                 }
             }
 
             // 3. Fallback to direct safe movement
-            return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly: false, out dispatchedStep);
+            return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly: false, out dispatchedStep, targetWarp, exactHitboxOnly);
         }
 
-        public bool SafeMoveTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals = false, bool forwardOnly = false)
+        public bool SafeMoveTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals = false, bool forwardOnly = false, WarpConnection targetWarp = null, bool exactHitboxOnly = false)
         {
-            return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly, out _);
+            return SafeMoveTowards(currentPos, destination, avoidPortals, forwardOnly, out _, targetWarp, exactHitboxOnly);
         }
 
-        public bool SafeMoveTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals, bool forwardOnly, out Vector2Int dispatchedStep)
+        public bool SafeMoveTowards(Vector2Int currentPos, Vector2Int destination, bool avoidPortals, bool forwardOnly, out Vector2Int dispatchedStep, WarpConnection targetWarp = null, bool exactHitboxOnly = false)
         {
             dispatchedStep = Vector2Int.zero;
             var netManager = NetworkManager.Instance;
@@ -260,6 +265,16 @@ namespace RebuildBotPlugin.Controllers
             }
 
             if (currentPos == destination) return true;
+
+            bool IsTilePortalBlocked(Vector2Int tile)
+            {
+                if (!avoidPortals) return false;
+                if (exactHitboxOnly || targetWarp != null)
+                {
+                    return WorldGraph.Instance.IsInsideAnyPortal(netManager.CurrentMap, tile, targetWarp, padding: 1);
+                }
+                return WorldGraph.Instance.IsNearPortal(netManager.CurrentMap, tile, BotConfigManager.Current.PortalSafetyRadius);
+            }
 
             var walkProvider = RoWalkDataProvider.Instance;
             if (walkProvider != null && walkProvider.WalkData != null)
@@ -302,28 +317,15 @@ namespace RebuildBotPlugin.Controllers
 
                     if (directWalkable)
                     {
-                        int steps = Pathfinder.GetPath(walkData, currentPos, directTarget, tempPath);
-                        if (steps > 0)
-                        {
-                            bool portalBlocked = false;
-                            if (avoidPortals)
-                            {
-                                for (int s = 0; s < steps; s++)
-                                {
-                                    if (WorldGraph.Instance.IsNearPortal(netManager.CurrentMap, tempPath[s], BotConfigManager.Current.PortalSafetyRadius))
-                                    {
-                                        portalBlocked = true;
-                                        break;
-                                    }
-                                }
-                            }
+                        var blockedIndices = (avoidPortals && (targetWarp != null || exactHitboxOnly))
+                            ? WorldGraph.Instance.GetMapPortalTileIndices(netManager.CurrentMap, walkData.Width, targetWarp, padding: 1)
+                            : null;
 
-                            if (!portalBlocked)
-                            {
-                                netManager.MovePlayer(directTarget);
-                                dispatchedStep = directTarget;
-                                return true;
-                            }
+                        if (MapNavMesh.HasSafeLineOfSight(currentPos, directTarget, walkData, blockedIndices))
+                        {
+                            netManager.MovePlayer(directTarget);
+                            dispatchedStep = directTarget;
+                            return true;
                         }
                     }
                 }
@@ -341,6 +343,10 @@ namespace RebuildBotPlugin.Controllers
                         ? new int[] { maxStep, 4, 3, 2, 1 }
                         : new int[] { maxStep, 2, 1 };
 
+                var probeBlockedIndices = (avoidPortals && (targetWarp != null || exactHitboxOnly))
+                    ? WorldGraph.Instance.GetMapPortalTileIndices(netManager.CurrentMap, walkData.Width, targetWarp, padding: 1)
+                    : null;
+
                 foreach (int d in stepDistances)
                 {
                     foreach (float angleOffset in angleOffsets)
@@ -352,34 +358,17 @@ namespace RebuildBotPlugin.Controllers
                         if (candidate == currentPos) continue;
                         if (candidate.x < 0 || candidate.y < 0 || candidate.x >= walkData.Width || candidate.y >= walkData.Height) continue;
 
-                        if (avoidPortals && WorldGraph.Instance.IsNearPortal(netManager.CurrentMap, candidate, BotConfigManager.Current.PortalSafetyRadius))
+                        if (avoidPortals && IsTilePortalBlocked(candidate))
                             continue;
 
                         if (walkData.CellWalkable(candidate.x, candidate.y))
                         {
-                            int steps = Pathfinder.GetPath(walkData, currentPos, candidate, tempPath);
-                            if (steps > 0)
+                            if (MapNavMesh.HasSafeLineOfSight(currentPos, candidate, walkData, probeBlockedIndices))
                             {
-                                bool portalBlocked = false;
-                                if (avoidPortals)
-                                {
-                                    for (int s = 0; s < steps; s++)
-                                    {
-                                        if (WorldGraph.Instance.IsNearPortal(netManager.CurrentMap, tempPath[s], BotConfigManager.Current.PortalSafetyRadius))
-                                        {
-                                            portalBlocked = true;
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if (!portalBlocked)
-                                {
-                                    netManager.MovePlayer(candidate);
-                                    dispatchedStep = candidate;
-                                    BotEngine.Instance?.LogEvent($"[Move] Step verified to ({candidate.x}, {candidate.y}) [offset: {angleOffset:F0}°, dist: {d}] ({steps} A* steps).");
-                                    return true;
-                                }
+                                netManager.MovePlayer(candidate);
+                                dispatchedStep = candidate;
+                                BotEngine.Instance?.LogEvent($"[Move] Step verified to ({candidate.x}, {candidate.y}) [offset: {angleOffset:F0}°, dist: {d}].");
+                                return true;
                             }
                         }
                     }
@@ -509,7 +498,8 @@ namespace RebuildBotPlugin.Controllers
                 else
                 {
                     activeTravelWarpTarget = activeTravelWarp.GetWalkableTriggerTile(walkData, player.CellPosition);
-                    activeTravelWaypoints = MapNavMesh.Instance.FindRouteWaypoints(player.CellPosition, activeTravelWarpTarget, 11);
+                    var blockedIndices = WorldGraph.Instance.GetMapPortalTileIndices(netManager.CurrentMap, walkData.Width, activeTravelWarp);
+                    activeTravelWaypoints = MapNavMesh.Instance.FindRouteWaypoints(player.CellPosition, activeTravelWarpTarget, 11, blockedIndices);
                     activeTravelWaypointIdx = 0;
                     BotEngine.Instance?.LogEvent($"[Travel] Planned route on '{netManager.CurrentMap}' to warp for '{activeTravelWarp.DestMap}' at ({activeTravelWarpTarget.x}, {activeTravelWarpTarget.y}) (Total: {cachedTravelRoute.Count} hops, {activeTravelWaypoints?.Count ?? 0} waypoints).");
                 }
@@ -547,7 +537,7 @@ namespace RebuildBotPlugin.Controllers
                     if (!player.IsMoving && now - lastTravelTime >= nextTravelDelay)
                     {
                         currentState = BotState.TravelingToTargetMap;
-                        NavigateTowards(player.CellPosition, nextHop.FromPos, avoidPortals: false, hopDistance: 11);
+                        NavigateTowards(player.CellPosition, nextHop.FromPos, avoidPortals: true, hopDistance: 11, targetWarp: nextHop);
                         lastTravelTime = now;
                         nextTravelDelay = UnityEngine.Random.Range(0.20f, 0.38f);
                         BotEngine.Instance?.LogEvent($"[Travel] Walking towards Kafra for teleport to '{nextHop.DestMap}' (dist: {distToKafra:F1}).");
@@ -770,7 +760,7 @@ namespace RebuildBotPlugin.Controllers
                 }
 
                 currentState = BotState.TravelingToTargetMap;
-                if (SafeMoveTowards(player.CellPosition, targetWp, avoidPortals: false, forwardOnly: false, out Vector2Int stepDispatched))
+                if (SafeMoveTowards(player.CellPosition, targetWp, avoidPortals: true, forwardOnly: false, out Vector2Int stepDispatched, targetWarp: activeTravelWarp))
                 {
                     currentTravelStepTarget = stepDispatched;
                     lastTravelTime = now;
@@ -781,7 +771,7 @@ namespace RebuildBotPlugin.Controllers
                 else
                 {
                     // Waypoint blocked, fallback to direct navigate towards warp
-                    if (NavigateTowards(player.CellPosition, warpPos, avoidPortals: false, hopDistance: 11, out Vector2Int directStep))
+                    if (NavigateTowards(player.CellPosition, warpPos, avoidPortals: true, hopDistance: 11, out Vector2Int directStep, targetWarp: activeTravelWarp))
                     {
                         currentTravelStepTarget = directStep;
                         lastTravelTime = now;

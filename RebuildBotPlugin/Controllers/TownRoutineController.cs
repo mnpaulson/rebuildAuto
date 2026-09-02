@@ -593,7 +593,7 @@ namespace RebuildBotPlugin.Controllers
 
             if (!player.IsMoving && now - lastActionTime >= 0.3f)
             {
-                navigation.NavigateTowards(player.CellPosition, targetPos, avoidPortals: false, hopDistance: 11);
+                navigation.NavigateTowards(player.CellPosition, targetPos, avoidPortals: true, hopDistance: 11, exactHitboxOnly: true);
                 lastActionTime = now;
             }
             return true;

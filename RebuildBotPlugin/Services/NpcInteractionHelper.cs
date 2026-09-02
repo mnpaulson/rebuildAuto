@@ -121,7 +121,7 @@ namespace RebuildBotPlugin.Services
             // If not yet visible in entity list, walk towards known location
             if (!player.IsMoving && now - lastActionTime >= 0.3f)
             {
-                navigation.NavigateTowards(player.CellPosition, npcPosition, avoidPortals: false, hopDistance: 11);
+                navigation.NavigateTowards(player.CellPosition, npcPosition, avoidPortals: true, hopDistance: 11, exactHitboxOnly: true);
                 lastActionTime = now;
             }
 

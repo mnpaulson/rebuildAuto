@@ -21,24 +21,28 @@ namespace RebuildBotPlugin
         public int KafraMenuOption = -1;
         public int ZenyCost = 0;
 
-        public Vector2Int CenterPos => new Vector2Int(FromPos.x + Math.Max(Width / 2, 0), FromPos.y + Math.Max(Height / 2, 0));
+        public int MinX => IsKafraTeleport ? FromPos.x : FromPos.x - Width;
+        public int MaxX => IsKafraTeleport ? FromPos.x : FromPos.x + Width;
+        public int MinY => IsKafraTeleport ? FromPos.y : FromPos.y - Height;
+        public int MaxY => IsKafraTeleport ? FromPos.y : FromPos.y + Height;
+
+        public Vector2Int CenterPos => FromPos;
 
         public Vector2Int GetWalkableTriggerTile(Assets.Scripts.MapEditor.RagnarokWalkData walkData, Vector2Int fromPlayerPos)
         {
-            int w = Math.Max(Width, 1);
-            int h = Math.Max(Height, 1);
+            if (IsKafraTeleport) return FromPos;
 
             ushort playerZone = MapNavMesh.Instance != null ? MapNavMesh.Instance.GetZoneId(fromPlayerPos) : (ushort)0;
 
-            Vector2Int bestTile = CenterPos;
+            Vector2Int bestTile = FromPos;
             float bestDist = float.MaxValue;
             bool foundWalkableInZone = false;
             bool foundWalkableAny = false;
 
-            // 1. Check all cells inside the warp bounding box
-            for (int x = FromPos.x; x < FromPos.x + w; x++)
+            // 1. Check all cells inside the warp bounding box (server uses [x-w..x+w, y-h..y+h] inclusive)
+            for (int x = MinX; x <= MaxX; x++)
             {
-                for (int y = FromPos.y; y < FromPos.y + h; y++)
+                for (int y = MinY; y <= MaxY; y++)
                 {
                     if (x >= 0 && y >= 0 && (walkData == null || (x < walkData.Width && y < walkData.Height && walkData.CellWalkable(x, y))))
                     {
@@ -72,9 +76,9 @@ namespace RebuildBotPlugin
             // 2. If no cells inside the bounding box are in player's zone, check 2-tile perimeter around the box
             for (int r = 1; r <= 2; r++)
             {
-                for (int x = FromPos.x - r; x <= FromPos.x + w + r - 1; x++)
+                for (int x = MinX - r; x <= MaxX + r; x++)
                 {
-                    for (int y = FromPos.y - r; y <= FromPos.y + h + r - 1; y++)
+                    for (int y = MinY - r; y <= MaxY + r; y++)
                     {
                         if (x >= 0 && y >= 0 && (walkData == null || (x < walkData.Width && y < walkData.Height && walkData.CellWalkable(x, y))))
                         {
@@ -108,12 +112,11 @@ namespace RebuildBotPlugin
             return bestTile;
         }
 
-        public bool IsInsideWarp(Vector2Int pos)
+        public bool IsInsideWarp(Vector2Int pos, int padding = 0)
         {
-            int w = Math.Max(Width, 1);
-            int h = Math.Max(Height, 1);
-            return pos.x >= FromPos.x && pos.x < FromPos.x + w &&
-                   pos.y >= FromPos.y && pos.y < FromPos.y + h;
+            if (IsKafraTeleport) return pos == FromPos;
+            return pos.x >= (MinX - padding) && pos.x <= (MaxX + padding) &&
+                   pos.y >= (MinY - padding) && pos.y <= (MaxY + padding);
         }
     }
 
@@ -548,24 +551,62 @@ namespace RebuildBotPlugin
             return route;
         }
 
-        public bool IsNearPortal(string map, Vector2Int cellPos, float minDistance = 5.0f)
+        public bool IsNearPortal(string map, Vector2Int cellPos, float minDistance = 5.0f, WarpConnection ignoreWarp = null)
         {
             if (!MapNodes.TryGetValue(map, out var warps)) return false;
             foreach (var warp in warps)
             {
-                int minX = warp.FromPos.x;
-                int maxX = warp.FromPos.x + Math.Max(warp.Width, 1);
-                int minY = warp.FromPos.y;
-                int maxY = warp.FromPos.y + Math.Max(warp.Height, 1);
+                if (warp.IsKafraTeleport) continue;
+                if (ignoreWarp != null && (warp == ignoreWarp || (warp.FromPos == ignoreWarp.FromPos && string.Equals(warp.DestMap, ignoreWarp.DestMap, StringComparison.OrdinalIgnoreCase))))
+                    continue;
 
-                float clampX = Mathf.Clamp(cellPos.x, minX, maxX);
-                float clampY = Mathf.Clamp(cellPos.y, minY, maxY);
+                float clampX = Mathf.Clamp(cellPos.x, warp.MinX, warp.MaxX);
+                float clampY = Mathf.Clamp(cellPos.y, warp.MinY, warp.MaxY);
 
                 float dist = Vector2.Distance(cellPos, new Vector2(clampX, clampY));
                 if (dist <= minDistance)
                     return true;
             }
             return false;
+        }
+
+        public bool IsInsideAnyPortal(string map, Vector2Int cellPos, WarpConnection ignoreWarp = null, int padding = 0)
+        {
+            if (!MapNodes.TryGetValue(map, out var warps)) return false;
+            foreach (var warp in warps)
+            {
+                if (warp.IsKafraTeleport) continue;
+                if (ignoreWarp != null && (warp == ignoreWarp || (warp.FromPos == ignoreWarp.FromPos && string.Equals(warp.DestMap, ignoreWarp.DestMap, StringComparison.OrdinalIgnoreCase))))
+                    continue;
+
+                if (warp.IsInsideWarp(cellPos, padding))
+                    return true;
+            }
+            return false;
+        }
+
+        public HashSet<int> GetMapPortalTileIndices(string map, int mapWidth, WarpConnection ignoreWarp = null, int padding = 1)
+        {
+            var result = new HashSet<int>();
+            if (mapWidth <= 0 || !MapNodes.TryGetValue(map, out var warps)) return result;
+            foreach (var warp in warps)
+            {
+                if (warp.IsKafraTeleport) continue;
+                if (ignoreWarp != null && (warp == ignoreWarp || (warp.FromPos == ignoreWarp.FromPos && string.Equals(warp.DestMap, ignoreWarp.DestMap, StringComparison.OrdinalIgnoreCase))))
+                    continue;
+
+                for (int x = warp.MinX - padding; x <= warp.MaxX + padding; x++)
+                {
+                    for (int y = warp.MinY - padding; y <= warp.MaxY + padding; y++)
+                    {
+                        if (x >= 0 && x < mapWidth && y >= 0)
+                        {
+                            result.Add(x + y * mapWidth);
+                        }
+                    }
+                }
+            }
+            return result;
         }
 
         public List<WarpConnection> GetWarpsConnecting(string fromMap, string destMap)

@@ -232,7 +232,7 @@ namespace RebuildBotPlugin
         /// Fast unconstrained global A* on the current map's walk mesh.
         /// Returns the full list of path steps from start to target.
         /// </summary>
-        public List<Vector2Int> FindPath(Vector2Int start, Vector2Int target)
+        public List<Vector2Int> FindPath(Vector2Int start, Vector2Int target, HashSet<int> blockedIndices = null)
         {
             ushort startZone = GetZoneId(start.x, start.y);
             ushort targetZone = GetZoneId(target.x, target.y);
@@ -349,6 +349,10 @@ namespace RebuildBotPlugin
                     if (zoneMap[nidx] != zoneMap[startIndex])
                         continue;
 
+                    // Skip blocked tiles (e.g. non-target portals) unless start or target tile
+                    if (blockedIndices != null && nidx != startIndex && nidx != targetIndex && blockedIndices.Contains(nidx))
+                        continue;
+
                     // Prevent diagonal cutting (only block if BOTH orthogonal cells are walls)
                     if (i >= 4)
                     {
@@ -370,7 +374,15 @@ namespace RebuildBotPlugin
                 }
             }
 
-            if (!found) return null;
+            if (!found)
+            {
+                // Fallback: retry unconstrained if blocked tiles made the destination unreachable
+                if (blockedIndices != null && blockedIndices.Count > 0)
+                {
+                    return FindPath(start, target, null);
+                }
+                return null;
+            }
 
             // Reconstruct path
             List<Vector2Int> path = new List<Vector2Int>();
@@ -393,27 +405,74 @@ namespace RebuildBotPlugin
             return baseH + (baseH >> 10);
         }
 
-        /// <summary>
-        /// Computes a list of intermediate macro waypoints (spaced by hopDistance)
-        /// that guide the character along the unconstrained path around map obstacles.
-        /// </summary>
-        public List<Vector2Int> FindRouteWaypoints(Vector2Int start, Vector2Int target, int hopDistance = 11)
+        public static bool HasSafeLineOfSight(Vector2Int from, Vector2Int to, RagnarokWalkData walkData, HashSet<int> blockedIndices = null)
         {
-            var fullPath = FindPath(start, target);
+            if (walkData == null) return false;
+            int x0 = from.x, y0 = from.y;
+            int x1 = to.x, y1 = to.y;
+            int dx = Math.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+            int dy = Math.Abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+            int err = (dx > dy ? dx : -dy) / 2;
+
+            while (true)
+            {
+                if (x0 != from.x || y0 != from.y)
+                {
+                    if (x0 < 0 || y0 < 0 || x0 >= walkData.Width || y0 >= walkData.Height)
+                        return false;
+                    if (!walkData.CellWalkable(x0, y0))
+                        return false;
+                    if (blockedIndices != null && blockedIndices.Contains(x0 + y0 * walkData.Width))
+                        return false;
+                }
+
+                if (x0 == x1 && y0 == y1) break;
+                int e2 = err;
+                if (e2 > -dx) { err -= dy; x0 += sx; }
+                if (e2 < dy) { err += dx; y0 += sy; }
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Finds path from start to target, then samples waypoints with line-of-sight pruning
+        /// that preserves corners and avoids cutting through blocked portals or walls.
+        /// </summary>
+        public List<Vector2Int> FindRouteWaypoints(Vector2Int start, Vector2Int target, int hopDistance = 11, HashSet<int> blockedIndices = null)
+        {
+            var fullPath = FindPath(start, target, blockedIndices);
             if (fullPath == null || fullPath.Count <= 1)
                 return null;
 
+            var walkProvider = RoWalkDataProvider.Instance;
+            var walkData = walkProvider != null ? walkProvider.WalkData : null;
+
             List<Vector2Int> waypoints = new List<Vector2Int>();
+            int currentIdx = 0;
 
-            for (int i = hopDistance; i < fullPath.Count; i += hopDistance)
+            while (currentIdx < fullPath.Count - 1)
             {
-                waypoints.Add(fullPath[i]);
-            }
+                int maxLookahead = Math.Min(currentIdx + hopDistance, fullPath.Count - 1);
+                int bestNextIdx = currentIdx + 1;
 
-            // Always add the final destination
-            if (waypoints.Count == 0 || waypoints[waypoints.Count - 1] != target)
-            {
-                waypoints.Add(target);
+                if (walkData != null)
+                {
+                    for (int nextIdx = maxLookahead; nextIdx > currentIdx; nextIdx--)
+                    {
+                        if (HasSafeLineOfSight(fullPath[currentIdx], fullPath[nextIdx], walkData, blockedIndices))
+                        {
+                            bestNextIdx = nextIdx;
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    bestNextIdx = maxLookahead;
+                }
+
+                waypoints.Add(fullPath[bestNextIdx]);
+                currentIdx = bestNextIdx;
             }
 
             return waypoints;
