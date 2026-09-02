@@ -94,17 +94,35 @@ namespace RebuildBotPlugin.Controllers
 
             int maxR = Mathf.Clamp(Mathf.FloorToInt(attackRange), 1, 14);
 
-            // Check ring around monster within attack range
-            for (int dx = -maxR; dx <= maxR; dx++)
+            // Directional Ray Arc Optimization:
+            // Instead of scanning a massive (2*maxR+1)^2 grid (up to 841 tiles!),
+            // probe outward along the vector from the monster towards the player (the approach direction)
+            // across a narrow cone of natural angles and progressive distance rings.
+            Vector2 toPlayer = (Vector2)(playerPos - monsterPos);
+            float baseAngle = (toPlayer.sqrMagnitude > 0.001f)
+                ? Mathf.Atan2(toPlayer.y, toPlayer.x) * Mathf.Rad2Deg
+                : 0f;
+
+            float[] angleOffsets = (maxR <= 2)
+                ? new float[] { 0f, 45f, -45f, 90f, -90f, 135f, -135f, 180f } // Melee: full 8-direction circle
+                : new float[] { 0f, 12f, -12f, 24f, -24f, 36f, -36f, 50f, -50f }; // Ranged: directional arc facing player
+
+            int[] radii = (maxR <= 2)
+                ? new int[] { maxR }
+                : (maxR <= 5)
+                    ? new int[] { maxR, maxR - 1 }
+                    : new int[] { maxR, maxR - 1, maxR - 2 };
+
+            string currentMap = NetworkManager.Instance != null ? NetworkManager.Instance.CurrentMap : "";
+
+            foreach (int r in radii)
             {
-                for (int dy = -maxR; dy <= maxR; dy++)
+                foreach (float angleOffset in angleOffsets)
                 {
-                    if (dx == 0 && dy == 0) continue;
+                    float rad = (baseAngle + angleOffset) * Mathf.Deg2Rad;
+                    Vector2 probeDir = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad));
+                    Vector2Int candidate = new Vector2Int(monsterPos.x + Mathf.RoundToInt(probeDir.x * r), monsterPos.y + Mathf.RoundToInt(probeDir.y * r));
 
-                    float distToMonster = Mathf.Sqrt(dx * dx + dy * dy);
-                    if (distToMonster > attackRange + 0.1f) continue;
-
-                    Vector2Int candidate = new Vector2Int(monsterPos.x + dx, monsterPos.y + dy);
                     if (candidate.x < 0 || candidate.y < 0 || candidate.x >= walkData.Width || candidate.y >= walkData.Height)
                         continue;
 
@@ -114,7 +132,6 @@ namespace RebuildBotPlugin.Controllers
                     if (playerZone != 0 && MapNavMesh.Instance.GetZoneId(candidate) != playerZone)
                         continue;
 
-                    string currentMap = NetworkManager.Instance != null ? NetworkManager.Instance.CurrentMap : "";
                     if (BotConfigManager.Current.AvoidPortalsWhileWandering && !string.IsNullOrEmpty(currentMap))
                     {
                         if (WorldGraph.Instance.IsNearPortal(currentMap, candidate, BotConfigManager.Current.PortalSafetyRadius))
@@ -143,7 +160,6 @@ namespace RebuildBotPlugin.Controllers
 
             if (candidates.Count == 0)
             {
-                string currentMap = NetworkManager.Instance != null ? NetworkManager.Instance.CurrentMap : "";
                 if (BotConfigManager.Current.AvoidPortalsWhileWandering && !string.IsNullOrEmpty(currentMap))
                 {
                     if (WorldGraph.Instance.IsNearPortal(currentMap, monsterPos, BotConfigManager.Current.PortalSafetyRadius))
@@ -814,7 +830,10 @@ namespace RebuildBotPlugin.Controllers
                 ? Vector2.Distance(player.CellPosition, currentStepTarget)
                 : float.MaxValue;
 
-            bool isPreClickWindow = isMoving && currentStepTarget != Vector2Int.zero && distToStep <= 3.8f && (now - lastWanderStepTime >= 0.6f);
+            // Pacing guard: never allow wander step evaluation faster than 0.22s
+            if (now - lastWanderStepTime < 0.22f) return;
+
+            bool isPreClickWindow = isMoving && currentStepTarget != Vector2Int.zero && distToStep <= 3.8f && (now - lastWanderStepTime >= 0.5f);
             bool isStoppedReady = !isMoving && (now - lastWanderStepTime >= nextWanderDelay);
 
             if (isPreClickWindow || isStoppedReady)
@@ -850,9 +869,9 @@ namespace RebuildBotPlugin.Controllers
                     currentStepTarget = stepDispatched;
                     lastWanderStepTime = now;
 
-                    // Continuous stride in motion: 0.0s delay. Brief glance when stopping at a destination
+                    // Stride in motion: paced 0.30s delay. Brief glance when stopping at a destination
                     float roll = UnityEngine.Random.value;
-                    nextWanderDelay = isMoving ? 0.0f : ((roll < 0.03f) ? UnityEngine.Random.Range(0.35f, 0.50f) : UnityEngine.Random.Range(0.12f, 0.22f));
+                    nextWanderDelay = isMoving ? 0.30f : ((roll < 0.03f) ? UnityEngine.Random.Range(0.40f, 0.60f) : UnityEngine.Random.Range(0.22f, 0.32f));
                     return;
                 }
                 else

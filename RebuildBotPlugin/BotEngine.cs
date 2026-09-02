@@ -59,6 +59,12 @@ namespace RebuildBotPlugin
         private bool justRespawned = false;
         private bool wasBotEnabled = false;
 
+        private static readonly System.Text.Json.JsonSerializerOptions CachedJsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+        private static readonly System.Diagnostics.Stopwatch FrameStopwatch = new System.Diagnostics.Stopwatch();
+        private int lastGc0Count = 0;
+        private Vector2Int lastHeatmapPlayerPos = new Vector2Int(-9999, -9999);
+        private float lastHeatmapUpdateTime = 0f;
+
         public BotEngine(IntPtr ptr) : base(ptr) { }
 
         private void Awake()
@@ -128,8 +134,7 @@ namespace RebuildBotPlugin
                     Timestamp = DateTime.UtcNow
                 };
 
-                var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-                string json = System.Text.Json.JsonSerializer.Serialize(statusObj, options);
+                string json = System.Text.Json.JsonSerializer.Serialize(statusObj, CachedJsonOptions);
 
                 string path = Services.ProfileManager.GetBotStatusPath();
                 string dir = System.IO.Path.GetDirectoryName(path);
@@ -169,15 +174,12 @@ namespace RebuildBotPlugin
 
         public void LogEvent(string msg)
         {
-            Plugin.LogInfo($"[{DateTime.Now:HH:mm:ss}] {msg}");
+            Services.BotLog.Info(msg);
         }
 
         public void LogDebug(string msg)
         {
-            if (BotConfigManager.Current.VerboseLogging)
-            {
-                Plugin.LogInfo($"[{DateTime.Now:HH:mm:ss}] [DEBUG] {msg}");
-            }
+            Services.BotLog.Debug(msg);
         }
 
         private float lastStatusEmitTime = 0f;
@@ -290,8 +292,7 @@ namespace RebuildBotPlugin
                     Timestamp = DateTime.UtcNow
                 };
 
-                var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-                string json = System.Text.Json.JsonSerializer.Serialize(statusObj, options);
+                string json = System.Text.Json.JsonSerializer.Serialize(statusObj, CachedJsonOptions);
 
                 string path = Services.ProfileManager.GetBotStatusPath();
                 string dir = System.IO.Path.GetDirectoryName(path);
@@ -334,6 +335,27 @@ namespace RebuildBotPlugin
             }
             wasBotEnabled = true;
 
+            FrameStopwatch.Restart();
+            try
+            {
+                ProcessBotTick(now);
+            }
+            finally
+            {
+                FrameStopwatch.Stop();
+                long frameMs = FrameStopwatch.ElapsedMilliseconds;
+                int currentGc0 = System.GC.CollectionCount(0);
+                if (frameMs > 25)
+                {
+                    int gcDelta = currentGc0 - lastGc0Count;
+                    Services.BotLog.Warn($"[LagSpike] Bot frame took {frameMs}ms! (GC0 Delta: {gcDelta}, State: {CurrentState})");
+                }
+                lastGc0Count = currentGc0;
+            }
+        }
+
+        private void ProcessBotTick(float now)
+        {
             var cam = CameraFollower.Instance;
             var netManager = NetworkManager.Instance;
             ServerControllable player = null;
@@ -405,8 +427,13 @@ namespace RebuildBotPlugin
                 }
             }
 
-            // Map navigation & heatmap tracking
-            MapHeatmap.Instance.UpdatePlayerPosition(netManager.CurrentMap, player.CellPosition);
+            // Map navigation & heatmap tracking (only update when player moves or once per second)
+            if (player.CellPosition != lastHeatmapPlayerPos || now - lastHeatmapUpdateTime >= 1.0f)
+            {
+                MapHeatmap.Instance.UpdatePlayerPosition(netManager.CurrentMap, player.CellPosition);
+                lastHeatmapPlayerPos = player.CellPosition;
+                lastHeatmapUpdateTime = now;
+            }
 
             var walkProvider = RoWalkDataProvider.Instance;
             if (walkProvider != null && walkProvider.WalkData != null)

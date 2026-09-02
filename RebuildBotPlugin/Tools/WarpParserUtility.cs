@@ -24,7 +24,7 @@ namespace RebuildBotPlugin.Tools
         {
             if (!Directory.Exists(dirPath))
             {
-                Debug.LogWarning($"[WarpParserUtility] Directory not found: {dirPath}");
+                Services.BotLog.Warn($"[WarpParserUtility] Directory not found: {dirPath}");
                 return 0;
             }
 
@@ -35,7 +35,7 @@ namespace RebuildBotPlugin.Tools
                 string text = File.ReadAllText(file);
                 count += ParseWarpText(text, mapNodes);
             }
-            Debug.Log($"[WarpParserUtility] Loaded {count} warp portal connections across {mapNodes.Count} maps.");
+            Services.BotLog.Info($"[WarpParserUtility] Loaded {count} warp portal connections across {mapNodes.Count} maps.");
             return count;
         }
 
@@ -79,7 +79,7 @@ namespace RebuildBotPlugin.Tools
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[WarpParserUtility] Failed to parse warp line '{match.Value}': {ex.Message}");
+                    Services.BotLog.Warn($"[WarpParserUtility] Failed to parse warp line '{match.Value}': {ex.Message}");
                 }
             }
             return added;

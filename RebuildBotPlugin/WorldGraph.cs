@@ -146,7 +146,7 @@ namespace RebuildBotPlugin
                 {
                     if (stream == null)
                     {
-                        Debug.LogWarning($"[WorldGraph] Embedded resource '{resourceName}' not found in assembly.");
+                        Services.BotLog.Warn($"[WorldGraph] Embedded resource '{resourceName}' not found in assembly.");
                         return;
                     }
                     using (var reader = new StreamReader(stream))
@@ -160,7 +160,7 @@ namespace RebuildBotPlugin
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[WorldGraph] Failed to load embedded warps: {ex.Message}");
+                Services.BotLog.Error($"[WorldGraph] Failed to load embedded warps: {ex.Message}");
             }
         }
 
@@ -200,7 +200,7 @@ namespace RebuildBotPlugin
                 mapWarps.Add(warp);
                 count++;
             }
-            Debug.Log($"[WorldGraph] Successfully loaded {count} embedded warp portals across {MapNodes.Count} maps.");
+            Services.BotLog.Info($"[WorldGraph] Successfully loaded {count} embedded warp portals across {MapNodes.Count} maps.");
         }
 
         public void BakeKafraTeleports()
@@ -363,7 +363,7 @@ namespace RebuildBotPlugin
                 ("cmd_fild07", new Vector2Int(127, 134), 2, 1200)
             });
 
-            Debug.Log($"[WorldGraph] Baked comprehensive Kafra teleport network into world graph.");
+            Services.BotLog.Info($"[WorldGraph] Baked comprehensive Kafra teleport network into world graph.");
         }
 
         public List<WarpConnection> FindRoute(string startMap, string targetMap)

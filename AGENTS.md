@@ -120,7 +120,10 @@ dotnet build RebuildBotPlugin/RebuildBotPlugin.csproj -c Release -p:DeployOnBuil
 
 ### H. Logging Guidelines
 - Avoid in-game IMGUI log boxes.
-- Dispatch all logging through `Plugin.LogInfo(msg)` (via `ManualLogSource`), which prints cleanly to the BepInEx terminal window.
+- Dispatch all logging through `BotLog.Info(msg)`, `BotLog.Warn(msg)`, `BotLog.Error(msg)`, or `BotEngine.Instance.LogEvent(msg)` / `LogDebug(msg)`.
+- **Destination Routing**:
+  - **Default (Orchestrator Mode)**: Logs are written to `profiles/<CharacterName>/bot.log` with a single timestamp `[yyyy-MM-dd HH:mm:ss]` for real-time streaming into the Fleet Orchestrator dashboard. BepInEx terminal logging is bypassed to eliminate console I/O overhead.
+  - **BepInEx Logging Mode**: When launched with the `-bepinexlog` CLI flag, logs route to the BepInEx terminal console (`Instance?.Log.LogInfo`) instead.
 
 ---
 
@@ -174,7 +177,9 @@ Supported Arguments:
 - `-profile "<Name>"` / `-character "<Name>"`: Sets active character profile.
 - `-account "<AccountId>"`: Selects a specific account by ID.
 - `-lowspec`: Starts client in Low-Spec mode (0% GPU render).
+- `-hidden`: Starts client with hidden windows (true headless mode).
 - `-fps <int>`: Sets target framerate limit (e.g. `-fps 10`).
+- `-bepinexlog` / `-bepinex`: Directs log output to the BepInEx console terminal instead of the Orchestrator log file.
 
 ---
 

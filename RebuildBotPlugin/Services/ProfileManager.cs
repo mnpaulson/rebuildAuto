@@ -16,6 +16,7 @@ namespace RebuildBotPlugin.Services
         public static string ExplicitCliAccount { get; private set; }
         public static bool LowSpecCliFlag { get; private set; } = false;
         public static bool HiddenCliFlag { get; private set; } = false;
+        public static bool BepInExLoggingCliFlag { get; private set; } = false;
         public static int? TargetFpsCli { get; private set; }
 
         public const string DevBaseDirectory = @"c:\dev\rebuildAuto\RebuildBotPlugin";
@@ -63,6 +64,13 @@ namespace RebuildBotPlugin.Services
                         {
                             HiddenCliFlag = true;
                         }
+                        else if (arg.Equals("-bepinexlog", StringComparison.OrdinalIgnoreCase) ||
+                                 arg.Equals("--bepinex-log", StringComparison.OrdinalIgnoreCase) ||
+                                 arg.Equals("-bepinex", StringComparison.OrdinalIgnoreCase) ||
+                                 arg.Equals("-consolelog", StringComparison.OrdinalIgnoreCase))
+                        {
+                            BepInExLoggingCliFlag = true;
+                        }
                         else if ((arg.Equals("-fps", StringComparison.OrdinalIgnoreCase) ||
                                   arg.Equals("--fps", StringComparison.OrdinalIgnoreCase)) &&
                                  i + 1 < args.Length)
@@ -80,18 +88,18 @@ namespace RebuildBotPlugin.Services
                 if (!string.IsNullOrWhiteSpace(ExplicitCliProfile))
                 {
                     SetActiveProfile(ExplicitCliProfile, forceReloadConfig: false);
-                    Plugin.LogInfo($"[Profile] Initialized with CLI Profile: '{ActiveProfileName}'");
+                    BotLog.Info($"[Profile] Initialized with CLI Profile: '{ActiveProfileName}'");
                 }
                 else
                 {
-                    Plugin.LogInfo("[Profile] No CLI profile specified. Running in default root profile mode.");
+                    BotLog.Info("[Profile] No CLI profile specified. Running in default root profile mode.");
                 }
 
                 AccountManager.LoadAccounts();
             }
             catch (Exception ex)
             {
-                Plugin.LogInfo($"[Profile Warning] Failed to parse command line args: {ex.Message}");
+                BotLog.Warn($"[Profile Warning] Failed to parse command line args: {ex.Message}");
             }
         }
 
@@ -108,7 +116,7 @@ namespace RebuildBotPlugin.Services
             // Otherwise, switch active profile to the logged-in character name
             if (!string.Equals(ActiveProfileName, characterName, StringComparison.OrdinalIgnoreCase))
             {
-                Plugin.LogInfo($"[Profile] In-game character identified as '{characterName}'. Switching active profile...");
+                BotLog.Info($"[Profile] In-game character identified as '{characterName}'. Switching active profile...");
                 SetActiveProfile(characterName, forceReloadConfig: true);
             }
         }
@@ -258,7 +266,7 @@ namespace RebuildBotPlugin.Services
             }
             catch (Exception ex)
             {
-                Plugin.LogInfo($"[Profile Warning] Note creating profile directory for '{profileName}': {ex.Message}");
+                BotLog.Warn($"[Profile Warning] Note creating profile directory for '{profileName}': {ex.Message}");
             }
         }
     }

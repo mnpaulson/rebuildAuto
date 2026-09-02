@@ -22,6 +22,9 @@ namespace RebuildBotPlugin.Controllers
         private float lastFileCheckTime = 0f;
         private const float FileCheckInterval = 1.0f; // Check for bot_macro.json every 1s
         private bool isFirstCheck = true;
+        
+        private static readonly JsonSerializerOptions ReadOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        private static readonly JsonSerializerOptions WriteOptions = new JsonSerializerOptions { WriteIndented = true };
 
         public const string DevMacroPath = @"c:\dev\rebuildAuto\RebuildBotPlugin\bot_macro.json";
         public const string DevStatusPath = @"c:\dev\rebuildAuto\RebuildBotPlugin\macro_status.json";
@@ -108,8 +111,7 @@ namespace RebuildBotPlugin.Controllers
                     return;
                 }
 
-                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                var batch = JsonSerializer.Deserialize<MacroCommandBatch>(json, options);
+                var batch = JsonSerializer.Deserialize<MacroCommandBatch>(json, ReadOptions);
 
                 if (batch != null && batch.Commands != null && batch.Commands.Count > 0)
                 {
@@ -225,8 +227,7 @@ namespace RebuildBotPlugin.Controllers
                     Timestamp = DateTime.UtcNow
                 };
 
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string json = JsonSerializer.Serialize(statusObj, options);
+                string json = JsonSerializer.Serialize(statusObj, WriteOptions);
 
                 string statusPath = Services.ProfileManager.GetStatusPath();
                 string dir = Path.GetDirectoryName(statusPath);

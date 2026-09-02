@@ -12,11 +12,15 @@ namespace RebuildBotPlugin.Controllers
 {
     public class SurvivalController
     {
-        private float lastPotionTime = 0f;
-        private float lastOutOfPotionWarningTime = 0f;
         private float lastFlyWingTime = 0f;
+        private float lastPotionTime = 0f;
         private float lastFleeStepTime = 0f;
+        private float lastOutOfPotionWarningTime = 0f;
         private float lastAspdPotionTime = 0f;
+        private float lastAspdCheckTime = 0f;
+        private float lastPotionCountCheckTime = 0f;
+        private int cachedPotionCount = 999;
+        private int cachedBestPotionId = -1;
         private bool isRecovering = false;
 
         public float LastFlyWingTime => lastFlyWingTime;
@@ -29,6 +33,10 @@ namespace RebuildBotPlugin.Controllers
             lastPotionTime = 0f;
             lastFleeStepTime = 0f;
             lastAspdPotionTime = 0f;
+            lastAspdCheckTime = 0f;
+            lastPotionCountCheckTime = 0f;
+            cachedPotionCount = 999;
+            cachedBestPotionId = -1;
         }
 
         public void ClearRecovery()
@@ -48,49 +56,51 @@ namespace RebuildBotPlugin.Controllers
             return InventoryHelper.FindFirstItemId(primaryId, noviceFlyWingId);
         }
 
-        public bool GetBestAvailableHpPotion(out int selectedPotionId, out int totalPotionCount)
+        public void RefreshPotionStatus(float now)
         {
-            selectedPotionId = -1;
-            totalPotionCount = 0;
+            if (now - lastPotionCountCheckTime < 0.4f) return;
+            lastPotionCountCheckTime = now;
 
-            if (!InventoryHelper.TryGetInventoryData(out var invData)) return false;
+            cachedPotionCount = 0;
+            cachedBestPotionId = -1;
+
+            if (!InventoryHelper.TryGetInventoryData(out var invData) || invData == null) return;
 
             var enabledIds = BotConfigManager.Current.HpPotionItemIds;
-            if (enabledIds == null || enabledIds.Count == 0) return false;
+            if (enabledIds == null || enabledIds.Count == 0) return;
 
-            // Sort enabled potion IDs ascending (lowest ID / lightest heal first)
-            var sortedIds = new List<int>(enabledIds);
-            sortedIds.Sort();
+            int bestId = -1;
+            int total = 0;
 
-            // Find all available enabled potions in inventory
-            Dictionary<int, int> counts = new Dictionary<int, int>();
             foreach (var kvp in invData)
             {
                 var item = kvp.Value;
                 if (item.ItemData != null && item.Count > 0 && enabledIds.Contains(item.ItemData.Id))
                 {
-                    counts[item.ItemData.Id] = counts.GetValueOrDefault(item.ItemData.Id, 0) + item.Count;
-                    totalPotionCount += item.Count;
+                    total += item.Count;
+                    if (bestId == -1 || item.ItemData.Id < bestId)
+                    {
+                        bestId = item.ItemData.Id;
+                    }
                 }
             }
 
-            // Pick the first available in sortedIds (lightest heal first)
-            foreach (int id in sortedIds)
-            {
-                if (counts.TryGetValue(id, out int count) && count > 0)
-                {
-                    selectedPotionId = id;
-                    return true;
-                }
-            }
+            cachedPotionCount = total;
+            cachedBestPotionId = bestId;
+        }
 
-            return false;
+        public bool GetBestAvailableHpPotion(out int selectedPotionId, out int totalPotionCount)
+        {
+            RefreshPotionStatus(Time.time);
+            selectedPotionId = cachedBestPotionId;
+            totalPotionCount = cachedPotionCount;
+            return selectedPotionId > 0;
         }
 
         public int GetHpPotionCount()
         {
-            GetBestAvailableHpPotion(out _, out int totalCount);
-            return totalCount;
+            RefreshPotionStatus(Time.time);
+            return cachedPotionCount;
         }
 
         public const int ConcentrationPotionId = 645;
@@ -234,6 +244,8 @@ namespace RebuildBotPlugin.Controllers
             if (!IsInTargetMap(netManager)) return false;
             if (now - lastAspdPotionTime < 1.0f) return false;
             if (HasAspdBuffActive()) return false;
+            if (now - lastAspdCheckTime < 2.0f) return false;
+            lastAspdCheckTime = now;
 
             if (GetBestAvailableAspdPotion(out int potionId, out string potionName))
             {
@@ -318,7 +330,15 @@ namespace RebuildBotPlugin.Controllers
         {
             float flyWingCd = BotConfigManager.Current.FlyWingCooldownSeconds;
             float hpPercent = player.MaxHp > 0 ? ((float)player.Hp / player.MaxHp * 100.0f) : 100.0f;
-            int potionCount = GetHpPotionCount();
+            float sitThreshold = Math.Max(BotConfigManager.Current.SitHpPercent, BotConfigManager.Current.EmergencyFlyWingHpPercent);
+
+            // Only refresh potion inventory metrics if HP is low enough to potentially need them, or periodically every 1.5s
+            if (hpPercent <= BotConfigManager.Current.HpPotionPercent || hpPercent <= sitThreshold || isRecovering || now - lastPotionCountCheckTime >= 1.5f)
+            {
+                RefreshPotionStatus(now);
+            }
+
+            int potionCount = cachedPotionCount;
             bool isOutOfPotions = (potionCount == 0);
             bool isSitting = IsPlayerSitting(player);
 
@@ -451,7 +471,6 @@ namespace RebuildBotPlugin.Controllers
             else
             {
                 // Enter recovery mode when out of potions and HP <= SitHpPercent or EmergencyFlyWing threshold
-                float sitThreshold = Math.Max(BotConfigManager.Current.SitHpPercent, BotConfigManager.Current.EmergencyFlyWingHpPercent);
                 if (isOutOfPotions && hpPercent <= sitThreshold)
                 {
                     if (!isRecovering)

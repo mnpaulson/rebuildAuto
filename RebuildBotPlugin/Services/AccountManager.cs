@@ -33,14 +33,14 @@ namespace RebuildBotPlugin.Services
                         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                         Registry = JsonSerializer.Deserialize<AccountRegistry>(json, options) ?? new AccountRegistry();
                         isLoaded = true;
-                        Plugin.LogInfo($"[Accounts] Loaded {Registry.Accounts.Count} account(s) from '{Path.GetFileName(targetPath)}'.");
+                        BotLog.Info($"[Accounts] Loaded {Registry.Accounts.Count} account(s) from '{Path.GetFileName(targetPath)}'.");
                         return;
                     }
                 }
             }
             catch (Exception ex)
             {
-                Plugin.LogInfo($"[Accounts Warning] Failed to load accounts.json: {ex.Message}");
+                BotLog.Warn($"[Accounts Warning] Failed to load accounts.json: {ex.Message}");
             }
 
             Registry = new AccountRegistry();

@@ -61,12 +61,12 @@ namespace RebuildBotPlugin.Services
                             }
                         }
                     }
-                    Plugin.LogInfo($"[MonsterDatabase] Loaded monster database: identified {parsedAggressiveMonsters.Count} aggressive species.");
+                    BotLog.Info($"[MonsterDatabase] Loaded monster database: identified {parsedAggressiveMonsters.Count} aggressive species.");
                 }
             }
             catch (Exception ex)
             {
-                Plugin.LogInfo($"[MonsterDatabase] Monster database notice: {ex.Message}");
+                BotLog.Warn($"[MonsterDatabase] Monster database notice: {ex.Message}");
             }
         }
 

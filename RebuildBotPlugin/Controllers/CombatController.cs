@@ -24,6 +24,7 @@ namespace RebuildBotPlugin.Controllers
         private float lastDistanceToTarget = float.MaxValue;
         private float lastAttackLogTime = 0f;
         private float lastApproachLogTime = 0f;
+        private float lastArrowCheckTime = 0f;
 
         public void Clear()
         {
@@ -34,6 +35,7 @@ namespace RebuildBotPlugin.Controllers
             CurrentTargetMaxHp = 0;
             lastAttackLogTime = 0f;
             lastApproachLogTime = 0f;
+            lastArrowCheckTime = 0f;
         }
 
         public void OnTargetDefeated()
@@ -119,9 +121,15 @@ namespace RebuildBotPlugin.Controllers
 
                 BotEngine.Instance?.LogEvent($"[Combat] Engaged {target.Name} (ID: {target.Id}, dist: {dist:F1} tiles). Initiating attack pursuit!");
             }
-            else if (BotConfigManager.Current.AutoEquipBestArrow)
+            else if (BotConfigManager.Current.AutoEquipBestArrow && now - lastArrowCheckTime > 3.0f)
             {
-                Services.ArrowHelper.EquipBestArrowForTarget(netManager, target);
+                // In-combat watchdog: only re-check inventory if currently out of equipped arrows
+                lastArrowCheckTime = now;
+                var state = PlayerState.Instance;
+                if (state != null && state.AmmoId == 0)
+                {
+                    Services.ArrowHelper.EquipBestArrowForTarget(netManager, target);
+                }
             }
             lastTargetId = target.Id;
             lastTargetHp = target.Hp;

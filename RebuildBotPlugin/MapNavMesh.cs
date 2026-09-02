@@ -180,7 +180,7 @@ namespace RebuildBotPlugin
             currentMap = mapName;
             sw.Stop();
 
-            Plugin.LogInfo($"[MapNavMesh] Analyzed map '{mapName}' ({width}x{height}) in {sw.ElapsedMilliseconds}ms: Found {totalZones} connected walkable zones.");
+            Services.BotLog.Info($"[MapNavMesh] Analyzed map '{mapName}' ({width}x{height}) in {sw.ElapsedMilliseconds}ms: Found {totalZones} connected walkable zones.");
         }
 
         public ushort GetZoneId(int x, int y)

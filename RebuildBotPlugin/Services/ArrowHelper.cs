@@ -113,13 +113,13 @@ namespace RebuildBotPlugin.Services
                                 MonsterElementsByName[name] = element;
                             }
                         }
-                        Plugin.LogInfo($"[ArrowHelper] Successfully loaded {MonsterElementsById.Count} monster elemental definitions.");
+                        BotLog.Info($"[ArrowHelper] Successfully loaded {MonsterElementsById.Count} monster elemental definitions.");
                     }
                 }
             }
             catch (Exception ex)
             {
-                Plugin.LogInfo($"[ArrowHelper] Could not load monster database: {ex.Message}");
+                BotLog.Warn($"[ArrowHelper] Could not load monster database: {ex.Message}");
             }
         }
 
