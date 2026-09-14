@@ -98,8 +98,19 @@ _ = Task.Run(async () =>
 
 #region REST Endpoints
 
-// 1. Fleet Overview
+// 1. Fleet Overview & Account Management
 app.MapGet("/api/fleet", () => Results.Ok(fleetMgr.GetFleetOverview()));
+
+app.MapGet("/api/accounts", () => Results.Ok(fleetMgr.GetAccountsSummary()));
+
+app.MapPost("/api/fleet/add-bot", (AddBotRequest req) =>
+{
+    if (fleetMgr.AddBot(req, out string error))
+    {
+        return Results.Ok(new { success = true, profileName = req.CharacterName.Trim(), message = $"Successfully created bot profile '{req.CharacterName.Trim()}'." });
+    }
+    return Results.BadRequest(new { success = false, error = error });
+});
 
 // 2. Bot Process Control
 app.MapPost("/api/bot/start", (LaunchBotRequest req) =>
@@ -141,6 +152,15 @@ app.MapPost("/api/bot/stop-all", () =>
 {
     procMgr.StopAll();
     return Results.Ok(new { success = true });
+});
+
+app.MapPost("/api/bot/party", (PartyUpdateRequest req) =>
+{
+    if (fleetMgr.UpdatePartySettings(req, out string err))
+    {
+        return Results.Ok(new { success = true });
+    }
+    return Results.BadRequest(new { success = false, error = err });
 });
 
 // 3. Win32 Window Arrangement
@@ -249,6 +269,22 @@ app.MapPost("/api/bot/{profile}/config", async (string profile, HttpRequest requ
         return Results.Ok(new { success = true });
     }
     return Results.BadRequest(new { success = false, error = error });
+});
+
+// 4b. Master Item Rules (Orchestrator Fleet-Wide)
+app.MapGet("/api/master-item-rules", () =>
+{
+    var rules = fleetMgr.GetMasterItemRules();
+    return Results.Ok(rules);
+});
+
+app.MapPost("/api/master-item-rules", (List<MasterItemRule> rules) =>
+{
+    if (fleetMgr.SaveMasterItemRules(rules, out string err))
+    {
+        return Results.Ok(new { success = true });
+    }
+    return Results.BadRequest(new { success = false, error = err });
 });
 
 // 5. Discrete Macro Dispatch

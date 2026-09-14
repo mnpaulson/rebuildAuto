@@ -42,6 +42,12 @@ namespace RebuildBotPlugin
             {
                 BotEngine.Instance?.Targeting.RegisterAttacker(src.Id);
             }
+
+            if (src != null && target != null)
+            {
+                BotEngine.Instance?.Party.OnAttackMotion(src, target);
+                BotEngine.Instance?.Skills.OnAttackMotion(src, target);
+            }
         }
     }
 
@@ -62,4 +68,73 @@ namespace RebuildBotPlugin
             BotEngine.Instance?.ExpTracker.UpdateJobExp(exp, maxExp);
         }
     }
+
+    [HarmonyPatch(typeof(ServerControllable), nameof(ServerControllable.StartCastBar))]
+    public static class StartCastBarPatch
+    {
+        public static void Postfix(ServerControllable __instance, CharacterSkill skill, float duration)
+        {
+            if (__instance != null)
+            {
+                __instance.IsCasting = true;
+                if (NetworkManager.Instance != null && __instance.Id == NetworkManager.Instance.PlayerId)
+                {
+                    Controllers.SkillController.ActiveCastEndTime = Time.timeSinceLevelLoad + Mathf.Max(0.1f, duration);
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(ServerControllable), nameof(ServerControllable.StopCasting))]
+    public static class StopCastingPatch
+    {
+        public static void Postfix(ServerControllable __instance)
+        {
+            if (__instance != null)
+            {
+                __instance.IsCasting = false;
+                if (NetworkManager.Instance != null && __instance.Id == NetworkManager.Instance.PlayerId)
+                {
+                    Controllers.SkillController.ActiveCastEndTime = 0f;
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Assets.Scripts.UI.Hud.ToastNotificationArea), nameof(Assets.Scripts.UI.Hud.ToastNotificationArea.AddPartyInvite))]
+    public static class AddPartyInvitePatch
+    {
+        public static void Postfix(int partyId, string leaderName, string partyName)
+        {
+            BotEngine.Instance?.Party.OnPartyInviteReceived(partyId, leaderName, partyName);
+        }
+    }
+
+    [HarmonyPatch(typeof(Assets.Scripts.UI.Hud.MinimapController), nameof(Assets.Scripts.UI.Hud.MinimapController.SetEntityPosition))]
+    public static class MinimapSetEntityPositionPatch
+    {
+        public static void Postfix(int entityId, CharacterDisplayType type, Vector2Int pos)
+        {
+            Services.BossTrackingService.Instance.OnSetEntityPosition(entityId, type, pos);
+        }
+    }
+
+    [HarmonyPatch(typeof(Assets.Scripts.UI.Hud.MinimapController), nameof(Assets.Scripts.UI.Hud.MinimapController.RemoveEntity))]
+    public static class MinimapRemoveEntityPatch
+    {
+        public static void Postfix(int entityId)
+        {
+            Services.BossTrackingService.Instance.OnRemoveEntity(entityId);
+        }
+    }
+
+    [HarmonyPatch(typeof(Assets.Scripts.UI.Hud.MinimapController), nameof(Assets.Scripts.UI.Hud.MinimapController.RemoveAllEntities))]
+    public static class MinimapRemoveAllEntitiesPatch
+    {
+        public static void Postfix()
+        {
+            Services.BossTrackingService.Instance.Clear();
+        }
+    }
 }
+

@@ -27,6 +27,17 @@ namespace RebuildBotPlugin.Controllers
         public void MarkUnreachable(int monsterId, float duration)
         {
             unreachableMonsters[monsterId] = Time.time + duration;
+            activeAttackers.Remove(monsterId);
+        }
+
+        public bool IsUnreachable(int monsterId)
+        {
+            return unreachableMonsters.TryGetValue(monsterId, out var expire) && expire > Time.time;
+        }
+
+        public void UnregisterAttacker(int monsterId)
+        {
+            activeAttackers.Remove(monsterId);
         }
 
         public void Clear()
@@ -49,6 +60,13 @@ namespace RebuildBotPlugin.Controllers
             var netManager = NetworkManager.Instance;
             if (netManager == null || netManager.EntityList == null) return null;
 
+            var player = CameraFollower.Instance?.TargetControllable;
+            if (player != null && ArrowHelper.IsBowUserOutOfAmmo(player))
+                return null;
+
+            if (BotEngine.Instance?.TownRoutine != null && BotEngine.Instance.TownRoutine.IsActive)
+                return null;
+
             float now = Time.time;
             List<int> staleAttackers = null;
             List<(ServerControllable entity, float dist, int hp)> validAttackers = null;
@@ -65,9 +83,19 @@ namespace RebuildBotPlugin.Controllers
                     continue;
                 }
 
+                // Ignore attackers that are currently marked unreachable (e.g. geometric LOS block)
+                if (unreachableMonsters.TryGetValue(attackerId, out var expire) && expire > now)
+                    continue;
+
                 if (netManager.EntityList.TryGetValue(attackerId, out var entity) &&
                     entity != null && entity.IsCharacterAlive && entity.Hp > 0 && !entity.IsAlly)
                 {
+                    // Ignore attackers that are currently hidden (must be revealed first by Ruwach)
+                    if (SkillController.IsEntityHidden(entity))
+                    {
+                        continue;
+                    }
+
                     // Do NOT attack monsters in self-defense that are on the avoidance list!
                     if (BotConfigManager.Current.AutoAvoidMonsters &&
                         BotConfigManager.Current.MonsterAvoidanceList != null &&
@@ -143,6 +171,19 @@ namespace RebuildBotPlugin.Controllers
             var netManager = NetworkManager.Instance;
             if (netManager == null || netManager.EntityList == null) return null;
 
+            var player = CameraFollower.Instance?.TargetControllable;
+            if (player != null && ArrowHelper.IsBowUserOutOfAmmo(player))
+                return null;
+
+            if (BotEngine.Instance?.TownRoutine != null && BotEngine.Instance.TownRoutine.IsActive)
+                return null;
+
+            if (BotConfigManager.Current.AutoRestockOnLowSupplies && TownRoutineController.HasDepletedEssentialSupplies())
+                return null;
+
+            if (TownRoutineController.IsOverweight())
+                return null;
+
             float now = Time.time;
             List<(ServerControllable monster, float dist, int priority, bool hasLos)> candidates = null;
 
@@ -158,6 +199,10 @@ namespace RebuildBotPlugin.Controllers
 
                 if (entity.CharacterType == CharacterType.Monster && !entity.IsAlly && entity.IsCharacterAlive && entity.Hp > 0)
                 {
+                    // Ignore hidden monsters (cannot be attacked until revealed by Ruwach)
+                    if (SkillController.IsEntityHidden(entity))
+                        continue;
+
                     // Instant topological reachability pre-check (must be on the same connected landmass)
                     if (!MapNavMesh.Instance.IsReachable(playerPos, entity.CellPosition))
                         continue;
@@ -172,13 +217,18 @@ namespace RebuildBotPlugin.Controllers
                         continue;
 
                     // Avoidance check (do not target monsters we are fleeing from)
-                    if (BotConfigManager.Current.AutoAvoidMonsters &&
+                    if (!PartyController.ShouldSuppressFlee() && BotConfigManager.Current.AutoAvoidMonsters &&
                         BotConfigManager.Current.MonsterAvoidanceList.Contains(entity.Name))
                         continue;
 
                     // Portal avoidance check (do not target monsters standing in/near portals)
                     if (BotConfigManager.Current.AvoidPortalsWhileWandering &&
                         WorldGraph.Instance.IsNearPortal(netManager.CurrentMap, entity.CellPosition, BotConfigManager.Current.PortalSafetyRadius))
+                        continue;
+
+                    // Boss avoidance check (do not target monsters inside boss avoidance zones)
+                    if (BotConfigManager.Current.AvoidTrackedBosses &&
+                        BossTrackingService.Instance.IsWithinBossZone(netManager.CurrentMap, entity.CellPosition, BotConfigManager.Current.BossAvoidanceRadius))
                         continue;
 
                     float dist = Vector2.Distance(playerPos, entity.CellPosition);
@@ -280,11 +330,14 @@ namespace RebuildBotPlugin.Controllers
             {
                 var entity = kvp.Value;
                 if (entity == null || entity.Id == netManager.PlayerId) continue;
-                if (entity.CharacterType != CharacterType.Monster || entity.IsAlly || !entity.IsCharacterAlive || entity.Hp <= 0) continue;
+                if (entity.CharacterType != CharacterType.Monster || entity.IsAlly || !entity.IsCharacterAlive || entity.Hp <= 0 || SkillController.IsEntityHidden(entity)) continue;
 
                 if (unreachableMonsters.TryGetValue(entity.Id, out var expire) && expire > now) continue;
                 if (BotConfigManager.Current.TargetMonsterBlacklist.Contains(entity.Name)) continue;
                 if (BotConfigManager.Current.AutoAvoidMonsters && BotConfigManager.Current.MonsterAvoidanceList.Contains(entity.Name)) continue;
+                if (BotConfigManager.Current.AvoidTrackedBosses &&
+                    BossTrackingService.Instance.IsWithinBossZone(netManager.CurrentMap, entity.CellPosition, BotConfigManager.Current.BossAvoidanceRadius))
+                    continue;
 
                 if (IsMonsterAggressive(entity.Name) || activeAttackers.ContainsKey(entity.Id))
                 {
@@ -355,6 +408,12 @@ namespace RebuildBotPlugin.Controllers
                     return false;
             }
 
+            if (BotConfigManager.Current.AvoidTrackedBosses && !string.IsNullOrEmpty(currentMap))
+            {
+                if (BossTrackingService.Instance.IsWithinBossZone(currentMap, monsterPos, BotConfigManager.Current.BossAvoidanceRadius))
+                    return false;
+            }
+
             var walkProvider = RoWalkDataProvider.Instance;
             if (walkProvider == null || walkProvider.WalkData == null) return true;
 
@@ -374,6 +433,12 @@ namespace RebuildBotPlugin.Controllers
                     return false;
             }
 
+            if (BotConfigManager.Current.AvoidTrackedBosses && !string.IsNullOrEmpty(currentMap))
+            {
+                if (BossTrackingService.Instance.IsWithinBossZone(currentMap, attackPos, BotConfigManager.Current.BossAvoidanceRadius))
+                    return false;
+            }
+
             // If attackPos is not walkable, probe 8-neighbors of monsterPos for any walkable tile in player's zone
             if (!walkData.CellWalkable(attackPos.x, attackPos.y))
             {
@@ -388,7 +453,13 @@ namespace RebuildBotPlugin.Controllers
                             walkData.CellWalkable(nx, ny) &&
                             (playerZone == 0 || MapNavMesh.Instance.GetZoneId(nx, ny) == playerZone))
                         {
-                            attackPos = new Vector2Int(nx, ny);
+                            Vector2Int neighborPos = new Vector2Int(nx, ny);
+                            if (BotConfigManager.Current.AvoidTrackedBosses && !string.IsNullOrEmpty(currentMap))
+                            {
+                                if (BossTrackingService.Instance.IsWithinBossZone(currentMap, neighborPos, BotConfigManager.Current.BossAvoidanceRadius))
+                                    continue;
+                            }
+                            attackPos = neighborPos;
                             break;
                         }
                     }
@@ -400,13 +471,38 @@ namespace RebuildBotPlugin.Controllers
             if (chebyshevDist <= 12 && walkData.CellWalkable(attackPos.x, attackPos.y))
             {
                 int directSteps = Pathfinder.GetPath(walkData, currentPos, attackPos, tempPath);
-                if (directSteps > 0) return true;
+                if (directSteps > 0)
+                {
+                    if (BotConfigManager.Current.AvoidTrackedBosses && !string.IsNullOrEmpty(currentMap))
+                    {
+                        bool passesBossZone = false;
+                        for (int i = 0; i < directSteps; i++)
+                        {
+                            if (BossTrackingService.Instance.IsWithinBossZone(currentMap, tempPath[i], BotConfigManager.Current.BossAvoidanceRadius))
+                            {
+                                passesBossZone = true;
+                                break;
+                            }
+                        }
+                        if (!passesBossZone) return true;
+                    }
+                    else
+                    {
+                        return true;
+                    }
+                }
             }
 
             // 2. Query MapNavMesh for the actual A* path to the attack tile
             if (walkData.CellWalkable(attackPos.x, attackPos.y))
             {
-                var path = MapNavMesh.Instance.FindPath(currentPos, attackPos);
+                HashSet<int> bossBlocked = null;
+                if (BotConfigManager.Current.AvoidTrackedBosses && !string.IsNullOrEmpty(currentMap))
+                {
+                    bossBlocked = BossTrackingService.Instance.GetBossBlockedTileIndices(currentMap, BotConfigManager.Current.BossAvoidanceRadius);
+                }
+
+                var path = MapNavMesh.Instance.FindPath(currentPos, attackPos, bossBlocked, allowUnconstrainedFallback: false);
                 if (path != null && path.Count > 0)
                 {
                     float maxPursuitSteps = BotConfigManager.Current.SearchRadius * 2.0f;
@@ -415,7 +511,16 @@ namespace RebuildBotPlugin.Controllers
             }
 
             // 3. Proximity fallback: if monster is close (<= 5 tiles) on the same zone, allow engagement
-            if (chebyshevDist <= 5) return true;
+            if (chebyshevDist <= 5)
+            {
+                if (BotConfigManager.Current.AvoidTrackedBosses && !string.IsNullOrEmpty(currentMap))
+                {
+                    if (BossTrackingService.Instance.IsWithinBossZone(currentMap, currentPos, BotConfigManager.Current.BossAvoidanceRadius) ||
+                        BossTrackingService.Instance.IsWithinBossZone(currentMap, monsterPos, BotConfigManager.Current.BossAvoidanceRadius))
+                        return false;
+                }
+                return true;
+            }
 
             return false;
         }

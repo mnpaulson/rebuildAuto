@@ -71,6 +71,53 @@ namespace RebuildBotPlugin.Services
             return jobId == 2 || jobId == 8 || jobId == 14 || jobId == 15;
         }
 
+        public static bool IsBowUser(ServerControllable player)
+        {
+            if (player != null && player.WeaponClass == 12)
+                return true;
+
+            var state = PlayerState.Instance;
+            if (state != null)
+            {
+                if (state.JobId == 2 || state.JobId == 8) // Archer or Hunter
+                {
+                    // Check if a melee weapon (dagger/knife/sword) is equipped
+                    if (state.EquippedItems != null && state.EquippedItems.Length > 4)
+                    {
+                        int weaponBagId = state.EquippedItems[4];
+                        if (weaponBagId > 0 && InventoryHelper.TryGetInventoryItem(weaponBagId, out var weaponItem) && weaponItem.ItemData != null)
+                        {
+                            string name = weaponItem.ItemData.Name ?? "";
+                            if (name.IndexOf("Dagger", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Knife", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Sword", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf("Main Gauche", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public static bool IsBowUserOutOfAmmo(ServerControllable player)
+        {
+            if (!IsBowUser(player)) return false;
+
+            // Attempt to unpack quivers if available before declaring out of ammo
+            var netManager = NetworkManager.Instance;
+            if (netManager != null && InventoryHelper.TryGetInventoryData(out var inv) && inv != null)
+            {
+                CheckAndUnpackQuivers(netManager, inv);
+            }
+
+            return GetTotalArrowCount() <= 0;
+        }
+
         public static void InitializeDatabase()
         {
             if (isInitialized) return;
@@ -344,9 +391,62 @@ namespace RebuildBotPlugin.Services
             return false;
         }
 
+        public static bool EquipAnyAvailableArrow(NetworkManager netManager)
+        {
+            if (netManager == null) return false;
+            if (!InventoryHelper.TryGetInventoryData(out var inv) || inv == null) return false;
+
+            var state = PlayerState.Instance;
+            if (state == null || !IsArcherClass(state.JobId)) return false;
+
+            if (Time.time - lastArrowEquipTime < 1.0f) return false;
+
+            CheckAndUnpackQuivers(netManager, inv);
+
+            var cfg = BotConfigManager.Current;
+            int bestSlot = -1;
+            int highestCount = 0;
+            string bestName = "";
+
+            foreach (var kvp in inv)
+            {
+                var item = kvp.Value;
+                if (item == null || item.ItemData == null || item.Count <= 0) continue;
+
+                if (item.ItemData.ItemClass == ItemClass.Ammo || KnownArrows.ContainsKey(item.Id))
+                {
+                    bool isEssential = cfg != null && cfg.IsSupplyEssential(item.ItemData.Name);
+                    if (isEssential)
+                    {
+                        bestSlot = item.BagSlotId;
+                        bestName = item.ItemData.Name;
+                        break;
+                    }
+
+                    if (item.Count > highestCount)
+                    {
+                        highestCount = item.Count;
+                        bestSlot = item.BagSlotId;
+                        bestName = item.ItemData.Name;
+                    }
+                }
+            }
+
+            if (bestSlot != -1 && state.AmmoId != bestSlot && lastEquippedArrowBagSlot != bestSlot)
+            {
+                netManager.SendEquipItem(bestSlot);
+                lastArrowEquipTime = Time.time;
+                lastEquippedArrowBagSlot = bestSlot;
+                BotEngine.Instance?.LogEvent($"[Arrow] Equipped available arrow '{bestName}' (BagSlot: {bestSlot}).");
+                return true;
+            }
+
+            return false;
+        }
+
         private static float lastQuiverUseTime = 0f;
 
-        private static void CheckAndUnpackQuivers(NetworkManager netManager, Il2CppSystem.Collections.Generic.SortedDictionary<int, InventoryItem> inv)
+        public static void CheckAndUnpackQuivers(NetworkManager netManager, Il2CppSystem.Collections.Generic.SortedDictionary<int, InventoryItem> inv)
         {
             if (Time.time - lastQuiverUseTime < 5.0f) return;
 

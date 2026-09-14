@@ -338,7 +338,7 @@ namespace RebuildBotPlugin
                 // Row 4: Recovery & Restock
                 Rect rToggles4 = cursor.Next(24);
                 ConfigToggle(new Rect(rToggles4.x, rToggles4.y, togW, 24), "Auto-Sit", () => cfg.AutoSitToRecover, v => cfg.AutoSitToRecover = v);
-                ConfigToggle(new Rect(rToggles4.x + togW + 4, rToggles4.y, togW, 24), "No-HP Town", () => cfg.AutoReturnOnOutOfHpItems, v => cfg.AutoReturnOnOutOfHpItems = v);
+                ConfigToggle(new Rect(rToggles4.x + togW + 4, rToggles4.y, togW, 24), "Restock Low", () => cfg.AutoRestockOnLowSupplies, v => cfg.AutoRestockOnLowSupplies = v);
                 ConfigToggle(new Rect(rToggles4.x + (togW + 4) * 2, rToggles4.y, togW, 24), "Auto-Equip", () => cfg.AutoEquipEmptySlots, v => cfg.AutoEquipEmptySlots = v);
 
                 cursor.Space(3);
@@ -394,6 +394,12 @@ namespace RebuildBotPlugin
                 GUI.Label(cursor.Next(22), $"Status: <b>{BotEngine.Instance.CurrentState}</b>");
                 GUI.Label(cursor.Next(22), $"Target: <b>{BotEngine.Instance.Combat.CurrentTargetName}</b> ({BotEngine.Instance.Combat.CurrentTargetHp}/{BotEngine.Instance.Combat.CurrentTargetMaxHp} HP)");
                 GUI.Label(cursor.Next(22), $"Kills: <b>{BotEngine.Instance.Combat.KillCount}</b> | Items Looted: <b>{BotEngine.Instance.Loot.LootCount}</b>");
+
+                float aspdLeft = BotEngine.Instance.Survival != null ? BotEngine.Instance.Survival.GetRemainingAspdBuffSeconds() : 0f;
+                string aspdInfo = aspdLeft > 0f
+                    ? $"<color=#88FF88><b>Active ({((int)aspdLeft) / 60}m {((int)aspdLeft) % 60:D2}s)</b></color>"
+                    : (BotConfigManager.Current.AutoAspdPotion ? "<color=#FFAA00><b>Inactive / Ready</b></color>" : "<color=#888888>Disabled</color>");
+                GUI.Label(cursor.Next(22), $"ASPD Potion: {aspdInfo}");
 
                 // Character Progression Goals
                 var prog = BotEngine.Instance.Progression;

@@ -138,6 +138,21 @@ namespace RebuildBotPlugin.Services
                 if (!string.IsNullOrWhiteSpace(ExplicitCliProfile))
                 {
                     BotConfigManager.Current.Enabled = true;
+                    try
+                    {
+                        string cfgPath = GetConfigPath();
+                        if (File.Exists(cfgPath))
+                        {
+                            string raw = File.ReadAllText(cfgPath);
+                            var dict = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object>>(raw, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (dict != null && (!dict.TryGetValue("Enabled", out var enObj) || (enObj is bool b && !b) || enObj?.ToString() == "False"))
+                            {
+                                dict["Enabled"] = true;
+                                File.WriteAllText(cfgPath, System.Text.Json.JsonSerializer.Serialize(dict, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                            }
+                        }
+                    }
+                    catch { }
                 }
             }
         }

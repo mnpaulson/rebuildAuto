@@ -68,56 +68,12 @@ namespace RebuildBotPlugin.Models
 
         public bool TryGetSkill(out CharacterSkill skill)
         {
-            skill = CharacterSkill.None;
-            if (string.IsNullOrWhiteSpace(Skill)) return false;
+            return Services.SkillResolver.TryResolveSkill(Skill, out skill, out _);
+        }
 
-            string s = Skill.Trim();
-            string clean = s.Replace(" ", "").Replace("_", "").Replace("-", "").Replace("'", "");
-
-            // Common aliases
-            if (clean.Equals("BasicSkill", StringComparison.OrdinalIgnoreCase) ||
-                clean.Equals("BasicMastery", StringComparison.OrdinalIgnoreCase) ||
-                clean.Equals("Basic", StringComparison.OrdinalIgnoreCase))
-            {
-                skill = CharacterSkill.BasicMastery;
-                return true;
-            }
-
-            if (clean.Equals("IncreaseAgi", StringComparison.OrdinalIgnoreCase) ||
-                clean.Equals("IncreaseAgility", StringComparison.OrdinalIgnoreCase))
-            {
-                skill = CharacterSkill.IncreaseAgility;
-                return true;
-            }
-
-            if (clean.Equals("OwlsEye", StringComparison.OrdinalIgnoreCase) ||
-                clean.Equals("OwlEye", StringComparison.OrdinalIgnoreCase))
-            {
-                skill = CharacterSkill.OwlEye;
-                return true;
-            }
-
-            if (clean.Equals("VulturesEye", StringComparison.OrdinalIgnoreCase) ||
-                clean.Equals("VultureEye", StringComparison.OrdinalIgnoreCase))
-            {
-                skill = CharacterSkill.VultureEye;
-                return true;
-            }
-
-            // Try parsing enum name directly (e.g., "Bash", "DoubleAttack", "IncreaseHpRecovery")
-            if (Enum.TryParse(clean, true, out skill))
-            {
-                return true;
-            }
-
-            // Also support integer ID as string (e.g., "1", "42")
-            if (byte.TryParse(s, out byte byteId) && Enum.IsDefined(typeof(CharacterSkill), byteId))
-            {
-                skill = (CharacterSkill)byteId;
-                return true;
-            }
-
-            return false;
+        public bool TryGetSkill(out CharacterSkill skill, out string canonicalName)
+        {
+            return Services.SkillResolver.TryResolveSkill(Skill, out skill, out canonicalName);
         }
     }
 }

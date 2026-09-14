@@ -211,6 +211,8 @@ namespace RebuildOrchestrator.Services
 
                 psi.Arguments = string.Join(" ", args);
 
+                SetProfileConfigEnabled(profile, true);
+
                 var proc = Process.Start(psi);
                 if (proc == null)
                 {
@@ -291,6 +293,7 @@ namespace RebuildOrchestrator.Services
                     catch { }
 
                     runningBots.TryRemove(profileName, out _);
+                    SetProfileConfigEnabled(profileName, false);
 
                     EmitLog(new FleetLogEntry
                     {
@@ -312,6 +315,26 @@ namespace RebuildOrchestrator.Services
                 }
             }
             return false;
+        }
+
+        private static void SetProfileConfigEnabled(string profileName, bool enabled)
+        {
+            try
+            {
+                string dir = Path.Combine(FleetManager.ProfilesDir, profileName);
+                string cfgPath = Path.Combine(dir, "bot_config.json");
+                if (File.Exists(cfgPath))
+                {
+                    string raw = File.ReadAllText(cfgPath);
+                    var dict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object?>>(raw, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (dict != null)
+                    {
+                        dict["Enabled"] = enabled;
+                        File.WriteAllText(cfgPath, System.Text.Json.JsonSerializer.Serialize(dict, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                    }
+                }
+            }
+            catch { }
         }
 
         public void StopAll()

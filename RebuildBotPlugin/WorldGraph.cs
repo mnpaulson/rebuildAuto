@@ -15,6 +15,8 @@ namespace RebuildBotPlugin
         public int Height;
         public string DestMap;
         public Vector2Int DestPos;
+        public int FromZone = 0;
+        public int DestZone = 0;
 
         // Kafra Teleport Properties
         public bool IsKafraTeleport = false;
@@ -126,6 +128,220 @@ namespace RebuildBotPlugin
 
         public Dictionary<string, List<WarpConnection>> MapNodes = new Dictionary<string, List<WarpConnection>>(StringComparer.OrdinalIgnoreCase);
 
+        public class MapZoneDef
+        {
+            public string MapName;
+            public int ZoneId;
+            public string ZoneName;
+            public RectInt Bounds;
+        }
+
+        public class MapZoneAnchor
+        {
+            public string MapName;
+            public Vector2Int Pos;
+            public int ZoneId;
+            public bool IsArrival;
+            public WarpConnection Warp;
+        }
+
+        private readonly List<MapZoneDef> registeredZones = new List<MapZoneDef>();
+        private readonly Dictionary<string, List<MapZoneAnchor>> mapAnchors = new Dictionary<string, List<MapZoneAnchor>>(StringComparer.OrdinalIgnoreCase);
+
+        public static bool IsInteriorMap(string map)
+        {
+            if (string.IsNullOrEmpty(map)) return false;
+            return map.IndexOf("_in", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   map.StartsWith("in_", StringComparison.OrdinalIgnoreCase) ||
+                   map.IndexOf("_castle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   map.IndexOf("_church", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        public void RegisterZone(string mapName, int zoneId, RectInt bounds, string zoneName = null)
+        {
+            if (string.IsNullOrEmpty(mapName)) return;
+            registeredZones.Add(new MapZoneDef
+            {
+                MapName = mapName,
+                ZoneId = zoneId,
+                Bounds = bounds,
+                ZoneName = zoneName ?? $"Zone_{zoneId}"
+            });
+        }
+
+        public void InitializeZones()
+        {
+            registeredZones.Clear();
+
+            // Seed known multi-room interior zones
+            // izlude_in
+            RegisterZone("izlude_in", 1, new RectInt(50, 80, 35, 60), "WeaponShop");
+            RegisterZone("izlude_in", 2, new RectInt(95, 40, 40, 55), "ToolShop");
+            RegisterZone("izlude_in", 3, new RectInt(50, 145, 75, 65), "Arena");
+            RegisterZone("izlude_in", 4, new RectInt(135, 95, 50, 50), "House");
+
+            // prt_in
+            RegisterZone("prt_in", 1, new RectInt(45, 55, 40, 35), "Blacksmith");
+            RegisterZone("prt_in", 2, new RectInt(150, 110, 40, 40), "WeaponArmorDealers");
+
+            ClusterInteriorZones();
+        }
+
+        public int ResolveZoneFromBounds(string mapName, Vector2Int pos)
+        {
+            foreach (var zd in registeredZones)
+            {
+                if (string.Equals(zd.MapName, mapName, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (pos.x >= zd.Bounds.xMin && pos.x <= zd.Bounds.xMax &&
+                        pos.y >= zd.Bounds.yMin && pos.y <= zd.Bounds.yMax)
+                    {
+                        return zd.ZoneId;
+                    }
+                }
+            }
+            return 0;
+        }
+
+        public int ResolveTargetZone(string mapName, Vector2Int pos)
+        {
+            if (string.IsNullOrEmpty(mapName) || !IsInteriorMap(mapName))
+                return 0;
+
+            int zid = ResolveZoneFromBounds(mapName, pos);
+            if (zid > 0) return zid;
+
+            if (!mapAnchors.TryGetValue(mapName, out var anchors) || anchors.Count == 0)
+                return 0;
+
+            float bestDist = float.MaxValue;
+            int bestZone = 0;
+            foreach (var a in anchors)
+            {
+                float d = Vector2.Distance(a.Pos, pos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    bestZone = a.ZoneId;
+                }
+            }
+            return bestZone;
+        }
+
+        public void ClusterInteriorZones()
+        {
+            mapAnchors.Clear();
+
+            foreach (var kvp in MapNodes)
+            {
+                foreach (var w in kvp.Value)
+                {
+                    if (IsInteriorMap(w.FromMap))
+                    {
+                        if (!mapAnchors.TryGetValue(w.FromMap, out var list))
+                        {
+                            list = new List<MapZoneAnchor>();
+                            mapAnchors[w.FromMap] = list;
+                        }
+                        list.Add(new MapZoneAnchor { MapName = w.FromMap, Pos = w.FromPos, IsArrival = false, Warp = w });
+                    }
+
+                    if (IsInteriorMap(w.DestMap))
+                    {
+                        if (!mapAnchors.TryGetValue(w.DestMap, out var list))
+                        {
+                            list = new List<MapZoneAnchor>();
+                            mapAnchors[w.DestMap] = list;
+                        }
+                        list.Add(new MapZoneAnchor { MapName = w.DestMap, Pos = w.DestPos, IsArrival = true, Warp = w });
+                    }
+                }
+            }
+
+            foreach (var kvp in mapAnchors)
+            {
+                string mapName = kvp.Key;
+                var anchors = kvp.Value;
+                int n = anchors.Count;
+
+                foreach (var a in anchors)
+                {
+                    int zid = ResolveZoneFromBounds(mapName, a.Pos);
+                    if (zid > 0)
+                    {
+                        a.ZoneId = zid;
+                        if (a.IsArrival) a.Warp.DestZone = zid;
+                        else a.Warp.FromZone = zid;
+                    }
+                }
+
+                int[] parent = new int[n];
+                for (int i = 0; i < n; i++) parent[i] = i;
+
+                int Find(int i) => parent[i] == i ? i : (parent[i] = Find(parent[i]));
+                void Union(int i, int j)
+                {
+                    int rA = Find(i), rB = Find(j);
+                    if (rA != rB) parent[rA] = rB;
+                }
+
+                for (int i = 0; i < n; i++)
+                {
+                    for (int j = i + 1; j < n; j++)
+                    {
+                        if (anchors[i].ZoneId > 0 && anchors[j].ZoneId > 0 && anchors[i].ZoneId != anchors[j].ZoneId)
+                            continue;
+
+                        float dist = Vector2.Distance(anchors[i].Pos, anchors[j].Pos);
+                        if (dist <= 28f)
+                        {
+                            Union(i, j);
+                        }
+                    }
+                }
+
+                int maxExistingZone = 0;
+                foreach (var a in anchors)
+                {
+                    if (a.ZoneId > maxExistingZone) maxExistingZone = a.ZoneId;
+                }
+                foreach (var zd in registeredZones)
+                {
+                    if (string.Equals(zd.MapName, mapName, StringComparison.OrdinalIgnoreCase) && zd.ZoneId > maxExistingZone)
+                        maxExistingZone = zd.ZoneId;
+                }
+
+                var rootToZone = new Dictionary<int, int>();
+                int nextNewZone = maxExistingZone + 1;
+
+                for (int i = 0; i < n; i++)
+                {
+                    int root = Find(i);
+                    if (anchors[i].ZoneId > 0)
+                    {
+                        rootToZone[root] = anchors[i].ZoneId;
+                    }
+                }
+
+                for (int i = 0; i < n; i++)
+                {
+                    int root = Find(i);
+                    if (!rootToZone.TryGetValue(root, out int zid))
+                    {
+                        zid = nextNewZone++;
+                        rootToZone[root] = zid;
+                    }
+                    anchors[i].ZoneId = zid;
+                    if (anchors[i].IsArrival)
+                        anchors[i].Warp.DestZone = zid;
+                    else
+                        anchors[i].Warp.FromZone = zid;
+                }
+            }
+
+            Services.BotLog.Info($"[WorldGraph] Clustered interior zones across {mapAnchors.Count} interior maps.");
+        }
+
 #pragma warning disable CS0649
         private class EmbeddedWarpEntry
         {
@@ -160,6 +376,8 @@ namespace RebuildBotPlugin
                 }
 
                 BakeKafraTeleports();
+                BakeNpcWarps();
+                InitializeZones();
             }
             catch (Exception ex)
             {
@@ -369,6 +587,45 @@ namespace RebuildBotPlugin
             Services.BotLog.Info($"[WorldGraph] Baked comprehensive Kafra teleport network into world graph.");
         }
 
+        public void BakeNpcWarps()
+        {
+            void AddNpcWarp(string fromMap, Vector2Int npcPos, string destMap, Vector2Int destPos, string npcName, string optionTextMatch, int menuOption, int cost)
+            {
+                var warp = new WarpConnection
+                {
+                    FromMap = fromMap,
+                    FromPos = npcPos,
+                    Width = 1,
+                    Height = 1,
+                    DestMap = destMap,
+                    DestPos = destPos,
+                    IsNpcWarp = true,
+                    NpcName = npcName,
+                    OptionTextMatch = optionTextMatch,
+                    NpcMenuOption = menuOption,
+                    ZenyCost = cost
+                };
+
+                if (!MapNodes.TryGetValue(fromMap, out var mapWarps))
+                {
+                    mapWarps = new List<WarpConnection>();
+                    MapNodes[fromMap] = mapWarps;
+                }
+                mapWarps.Add(warp);
+            }
+
+            // 1. Izlude Sailor (at 201, 181) -> Byalan Island (izlu2dun at 107, 50, 150z)
+            AddNpcWarp("izlude", new Vector2Int(201, 181), "izlu2dun", new Vector2Int(107, 50), "Sailor", "Byalan", 0, 150);
+
+            // 2. Izlude Sailor (at 201, 181) -> Alberta Marina (alberta at 188, 169, 500z)
+            AddNpcWarp("izlude", new Vector2Int(201, 181), "alberta", new Vector2Int(188, 169), "Sailor", "Alberta", 1, 500);
+
+            // 3. Byalan Island Sailor (at 108, 27) -> Izlude (izlude at 176, 182, Free)
+            AddNpcWarp("izlu2dun", new Vector2Int(108, 27), "izlude", new Vector2Int(176, 182), "Sailor", "Yeah", 0, 0);
+
+            Services.BotLog.Info("[WorldGraph] Baked custom NPC warp network into world graph.");
+        }
+
         public List<WarpConnection> FindRoute(string startMap, string targetMap)
         {
             return FindZoneAwareRoute(startMap, Vector2Int.zero, targetMap, null, null);
@@ -404,9 +661,14 @@ namespace RebuildBotPlugin
             if (!MapNodes.TryGetValue(startMap, out var startMapWarps) || startMapWarps.Count == 0)
                 return null;
 
+            int startZoneId = IsInteriorMap(startMap) ? ResolveTargetZone(startMap, startPos) : 0;
+
             var reachableStartWarps = new List<(WarpConnection warp, Vector2Int triggerTile)>();
             foreach (var w in startMapWarps)
             {
+                if (startZoneId > 0 && w.FromZone > 0 && w.FromZone != startZoneId)
+                    continue;
+
                 Vector2Int triggerTile = w.GetWalkableTriggerTile(walkData, startPos);
                 if (isReachableOnStartMap == null || isReachableOnStartMap(startPos, triggerTile))
                 {
@@ -433,7 +695,7 @@ namespace RebuildBotPlugin
                 float walkFromStart = Vector2.Distance(startPos, triggerTile);
 
                 // For start map warps when choosing among multiple candidates, use true A* path distance if available
-                if (reachableStartWarps.Count > 1 && !warp.IsKafraTeleport)
+                if (reachableStartWarps.Count > 1 && !warp.IsNpcInteraction)
                 {
                     var truePath = MapNavMesh.Instance.FindPath(startPos, triggerTile);
                     if (truePath != null && truePath.Count > 0)
@@ -442,7 +704,7 @@ namespace RebuildBotPlugin
                     }
                 }
 
-                float edgeCost = (warp.IsKafraTeleport ? 0.2f : 1.0f) + (walkFromStart * 0.002f);
+                float edgeCost = (warp.IsNpcInteraction ? 0.2f : 1.0f) + (walkFromStart * 0.002f);
 
                 // Apply hysteresis commitment bonus to currently pursued warp on the start map
                 if (preferredStartWarp != null && warp == preferredStartWarp)
@@ -486,6 +748,13 @@ namespace RebuildBotPlugin
                 // Check if this warp lands on targetMap
                 if (string.Equals(current.warp.DestMap, targetMap, StringComparison.OrdinalIgnoreCase))
                 {
+                    int targetZoneId = targetPos.HasValue ? ResolveTargetZone(targetMap, targetPos.Value) : 0;
+                    if (targetZoneId > 0 && current.warp.DestZone != targetZoneId)
+                    {
+                        // Lands on targetMap, but in a different disconnected zone. Continue exploring!
+                        goto EXPAND;
+                    }
+
                     if (isSameMap && targetPos.HasValue && isReachableOnStartMap != null)
                     {
                         // If re-entering the original startMap, ensure this warp lands in the zone containing targetPos
@@ -513,8 +782,17 @@ namespace RebuildBotPlugin
                 // Expand warps leaving current.warp.DestMap
                 if (MapNodes.TryGetValue(current.warp.DestMap, out var nextWarps))
                 {
+                    bool destIsInterior = IsInteriorMap(current.warp.DestMap);
                     foreach (var nextWarp in nextWarps)
                     {
+                        // If the map we just landed on is an interior map with multiple zones,
+                        // we can ONLY walk to outgoing warps that start in our current zone!
+                        if (destIsInterior && current.warp.DestZone > 0)
+                        {
+                            if (nextWarp.FromZone != current.warp.DestZone)
+                                continue;
+                        }
+
                         Vector2Int nextTrigger = nextWarp.GetWalkableTriggerTile(walkData, current.warp.DestPos);
 
                         // If traversing back across startMap, verify startMap zone reachability
@@ -525,7 +803,7 @@ namespace RebuildBotPlugin
                         }
 
                         float walkBetween = Vector2.Distance(current.warp.DestPos, nextTrigger);
-                        float edgeCost = (nextWarp.IsKafraTeleport ? 0.2f : 1.0f) + (walkBetween * 0.002f);
+                        float edgeCost = (nextWarp.IsNpcInteraction ? 0.2f : 1.0f) + (walkBetween * 0.002f);
                         float newDist = current.dist + edgeCost;
 
                         if (newDist < bestGoalCost && (!distances.TryGetValue(nextWarp, out float oldDist) || newDist < oldDist))

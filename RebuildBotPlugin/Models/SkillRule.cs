@@ -26,7 +26,8 @@ namespace RebuildBotPlugin.Models
         Opener,             // Cast once upon engaging a new monster
         BuffMaintenance,    // Maintained continuously whenever the corresponding buff is missing
         HpBelowPercent,     // Emergency recovery when HP drops below threshold
-        MobCluster          // Cast when min enemies in radius is reached (AOE)
+        MobCluster,         // Cast when min enemies in radius is reached (AOE)
+        PartyBuff           // Maintained across party members and self
     }
 
     public class SkillRule

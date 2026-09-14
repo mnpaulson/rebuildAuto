@@ -72,6 +72,7 @@ namespace RebuildBotPlugin
         private ushort[] zoneMap;
         private int totalZones;
         private readonly Dictionary<ushort, int> zoneCellCounts = new Dictionary<ushort, int>();
+        private readonly Dictionary<ushort, RectInt> zoneBounds = new Dictionary<ushort, RectInt>();
 
         // Flat-array A* pathfinding caches (zero per-search heap allocations)
         private int[] gScores;
@@ -109,6 +110,7 @@ namespace RebuildBotPlugin
 
             zoneMap = new ushort[totalCells];
             zoneCellCounts.Clear();
+            zoneBounds.Clear();
 
             // Prepare A* arrays
             if (gScores == null || gScores.Length < totalCells)
@@ -136,6 +138,7 @@ namespace RebuildBotPlugin
 
                     ushort zoneId = nextZoneId++;
                     int cellCount = 0;
+                    int zMinX = x, zMaxX = x, zMinY = y, zMaxY = y;
 
                     zoneMap[idx] = zoneId;
                     queue.Enqueue(idx);
@@ -167,18 +170,36 @@ namespace RebuildBotPlugin
                                     continue;
                             }
 
+                            if (nx < zMinX) zMinX = nx;
+                            if (nx > zMaxX) zMaxX = nx;
+                            if (ny < zMinY) zMinY = ny;
+                            if (ny > zMaxY) zMaxY = ny;
+
                             zoneMap[nidx] = zoneId;
                             queue.Enqueue(nidx);
                         }
                     }
 
                     zoneCellCounts[zoneId] = cellCount;
+                    zoneBounds[zoneId] = new RectInt(zMinX, zMinY, zMaxX - zMinX + 1, zMaxY - zMinY + 1);
                 }
             }
 
             totalZones = nextZoneId - 1;
             currentMap = mapName;
             sw.Stop();
+
+            if (WorldGraph.IsInteriorMap(mapName) && totalZones > 1)
+            {
+                for (ushort zid = 1; zid <= totalZones; zid++)
+                {
+                    if (zoneBounds.TryGetValue(zid, out var b))
+                    {
+                        WorldGraph.Instance.RegisterZone(mapName, zid, b);
+                    }
+                }
+                WorldGraph.Instance.ClusterInteriorZones();
+            }
 
             Services.BotLog.Info($"[MapNavMesh] Analyzed map '{mapName}' ({width}x{height}) in {sw.ElapsedMilliseconds}ms: Found {totalZones} connected walkable zones.");
         }
@@ -229,19 +250,33 @@ namespace RebuildBotPlugin
         }
 
         /// <summary>
-        /// Fast unconstrained global A* on the current map's walk mesh.
-        /// Returns the full list of path steps from start to target.
+        /// Global A* on the current map's walk mesh.
+        /// Unconstrained by zone partitions so bots can route around complex indoor walls,
+        /// fences, and obstacles. Returns the full list of path steps from start to target.
         /// </summary>
         public List<Vector2Int> FindPath(Vector2Int start, Vector2Int target, HashSet<int> blockedIndices = null)
         {
-            ushort startZone = GetZoneId(start.x, start.y);
-            ushort targetZone = GetZoneId(target.x, target.y);
+            var walkProvider = RoWalkDataProvider.Instance;
+            if (walkProvider == null || walkProvider.WalkData == null) return null;
+            var walkData = walkProvider.WalkData;
 
-            if (startZone == 0 || targetZone == 0 || startZone != targetZone)
-                return null;
+            int mapWidth = walkData.Width;
+            int mapHeight = walkData.Height;
+            int totalCells = mapWidth * mapHeight;
+
+            // Ensure A* structures are allocated and sized
+            if (gScores == null || gScores.Length < totalCells)
+            {
+                width = mapWidth;
+                height = mapHeight;
+                gScores = new int[totalCells];
+                parentNodes = new int[totalCells];
+                closedMarks = new int[totalCells];
+                openHeap = new FastMinHeap(totalCells);
+            }
 
             Vector2Int actualStart = start;
-            if (zoneMap[start.x + start.y * width] != startZone)
+            if (!walkData.CellWalkable(start.x, start.y))
             {
                 float bestDist = float.MaxValue;
                 for (int r = 1; r <= 3; r++)
@@ -252,7 +287,7 @@ namespace RebuildBotPlugin
                         {
                             int nx = start.x + ox;
                             int ny = start.y + oy;
-                            if (nx >= 0 && ny >= 0 && nx < width && ny < height && zoneMap[nx + ny * width] == startZone)
+                            if (nx >= 0 && ny >= 0 && nx < mapWidth && ny < mapHeight && walkData.CellWalkable(nx, ny))
                             {
                                 float d = (ox * ox) + (oy * oy);
                                 if (d < bestDist)
@@ -268,7 +303,7 @@ namespace RebuildBotPlugin
             }
 
             Vector2Int actualTarget = target;
-            if (zoneMap[target.x + target.y * width] != startZone)
+            if (!walkData.CellWalkable(target.x, target.y))
             {
                 float bestDist = float.MaxValue;
                 for (int r = 1; r <= 3; r++)
@@ -279,7 +314,7 @@ namespace RebuildBotPlugin
                         {
                             int nx = target.x + ox;
                             int ny = target.y + oy;
-                            if (nx >= 0 && ny >= 0 && nx < width && ny < height && zoneMap[nx + ny * width] == startZone)
+                            if (nx >= 0 && ny >= 0 && nx < mapWidth && ny < mapHeight && walkData.CellWalkable(nx, ny))
                             {
                                 float d = (ox * ox) + (oy * oy);
                                 if (d < bestDist)
@@ -294,19 +329,18 @@ namespace RebuildBotPlugin
                 }
             }
 
-            if (actualStart == actualTarget) return new List<Vector2Int> { actualStart };
+            if (!walkData.CellWalkable(actualStart.x, actualStart.y) || !walkData.CellWalkable(actualTarget.x, actualTarget.y))
+                return null;
 
-            var walkProvider = RoWalkDataProvider.Instance;
-            if (walkProvider == null || walkProvider.WalkData == null) return null;
-            var walkData = walkProvider.WalkData;
+            if (actualStart == actualTarget) return new List<Vector2Int> { actualStart };
 
             currentSearchSession++;
             int session = currentSearchSession;
 
             openHeap.Clear();
 
-            int startIndex = actualStart.x + actualStart.y * width;
-            int targetIndex = actualTarget.x + actualTarget.y * width;
+            int startIndex = actualStart.x + actualStart.y * mapWidth;
+            int targetIndex = actualTarget.x + actualTarget.y * mapWidth;
 
             gScores[startIndex] = 0;
             parentNodes[startIndex] = -1;
@@ -319,7 +353,7 @@ namespace RebuildBotPlugin
             int[] cost = { 10, 10, 10, 10, 14, 14, 14, 14 };
 
             bool found = false;
-            int maxIterations = Math.Max(width * height, 100000);
+            int maxIterations = Math.Max(totalCells, 150000);
             int iterations = 0;
 
             while (openHeap.Count > 0 && iterations++ < maxIterations)
@@ -331,8 +365,8 @@ namespace RebuildBotPlugin
                     break;
                 }
 
-                int cx = currIdx % width;
-                int cy = currIdx / width;
+                int cx = currIdx % mapWidth;
+                int cy = currIdx / mapWidth;
                 int currentG = gScores[currIdx];
 
                 for (int i = 0; i < 8; i++)
@@ -340,13 +374,16 @@ namespace RebuildBotPlugin
                     int nx = cx + dx[i];
                     int ny = cy + dy[i];
 
-                    if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+                    if (nx < 0 || ny < 0 || nx >= mapWidth || ny >= mapHeight)
                         continue;
 
-                    int nidx = nx + ny * width;
+                    if (!walkData.CellWalkable(nx, ny))
+                        continue;
 
-                    // Must be in the exact same zone
-                    if (zoneMap[nidx] != zoneMap[startIndex])
+                    int nidx = nx + ny * mapWidth;
+
+                    // Skip blocked tiles (e.g. non-target portals) unless start or target tile
+                    if (blockedIndices != null && nidx != startIndex && nidx != targetIndex && blockedIndices.Contains(nidx))
                         continue;
 
                     // Skip blocked tiles (e.g. non-target portals) unless start or target tile
@@ -389,7 +426,7 @@ namespace RebuildBotPlugin
             int trace = targetIndex;
             while (trace != -1)
             {
-                path.Add(new Vector2Int(trace % width, trace / width));
+                path.Add(new Vector2Int(trace % mapWidth, trace / mapWidth));
                 trace = parentNodes[trace];
             }
 

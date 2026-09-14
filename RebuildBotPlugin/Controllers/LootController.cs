@@ -19,6 +19,8 @@ namespace RebuildBotPlugin.Controllers
         public int PendingLootItemId { get; set; } = -1;
         public int LootCount { get; set; } = 0;
 
+        private float lastLootTime = 0f;
+
         public void Clear()
         {
             PendingLootItemId = -1;
@@ -62,7 +64,7 @@ namespace RebuildBotPlugin.Controllers
             }
         }
 
-        public GroundItem FindNearestGroundItem(Vector2Int playerPos)
+        public GroundItem FindNearestGroundItem(Vector2Int playerPos, Vector2Int? leaderPos = null, float maxDistFromLeader = 16.0f)
         {
             var netManager = NetworkManager.Instance;
             if (netManager == null || netManager.GroundItemList == null) return null;
@@ -91,6 +93,11 @@ namespace RebuildBotPlugin.Controllers
 
                 Vector2 itemCell = new Vector2(item.transform.position.x, item.transform.position.z);
                 Vector2Int itemCellPos = new Vector2Int(Mathf.RoundToInt(itemCell.x), Mathf.RoundToInt(itemCell.y));
+
+                // If following a leader, ensure the loot dropped within tether range of the leader
+                if (leaderPos.HasValue && Vector2.Distance(itemCell, leaderPos.Value) > maxDistFromLeader)
+                    continue;
+
                 if (!MapNavMesh.Instance.IsReachable(playerPos, itemCellPos))
                     continue;
 
@@ -111,6 +118,54 @@ namespace RebuildBotPlugin.Controllers
                 }
             }
             return bestItem;
+        }
+
+        public bool ProcessLoot(
+            NetworkManager netManager,
+            ServerControllable player,
+            float now,
+            ref BotState currentState,
+            Vector2Int? leaderPos = null,
+            float maxDistFromLeader = 16.0f)
+        {
+            if (netManager == null || player == null || !player.IsCharacterAlive) return false;
+
+            // Check if pending item was picked up or disappeared
+            if (PendingLootItemId != -1)
+            {
+                if (netManager.GroundItemList == null || !netManager.GroundItemList.ContainsKey(PendingLootItemId))
+                {
+                    LootCount++;
+                    BotEngine.Instance?.LogEvent($"Collected loot item! Total Loot: {LootCount}");
+                    PendingLootItemId = -1;
+                }
+            }
+
+            var nearestItem = FindNearestGroundItem(player.CellPosition, leaderPos, maxDistFromLeader);
+            if (nearestItem != null)
+            {
+                if (now - lastLootTime >= BotConfigManager.Current.LootCooldownSeconds)
+                {
+                    PendingLootItemId = nearestItem.EntityId;
+                    TrackLootAttempt(nearestItem.EntityId, now);
+
+                    netManager.SendPickUpItem(nearestItem.EntityId);
+                    lastLootTime = now;
+                    currentState = BotState.LootingItem;
+                    float distToItem = Vector2.Distance(player.CellPosition, new Vector2(nearestItem.transform.position.x, nearestItem.transform.position.z));
+                    BotEngine.Instance?.LogEvent($"[Loot] Picking up {nearestItem.ItemName} (ID: {nearestItem.EntityId}, dist: {distToItem:F1} tiles).");
+                }
+                else
+                {
+                    currentState = BotState.LootingItem;
+                }
+                return true;
+            }
+            else
+            {
+                PendingLootItemId = -1;
+                return false;
+            }
         }
     }
 }

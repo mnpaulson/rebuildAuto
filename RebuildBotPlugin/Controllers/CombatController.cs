@@ -1,6 +1,7 @@
 using Assets.Scripts;
 using Assets.Scripts.Network;
 using Assets.Scripts.PlayerControl;
+using RebuildBotPlugin.Services;
 using UnityEngine;
 
 namespace RebuildBotPlugin.Controllers
@@ -15,6 +16,8 @@ namespace RebuildBotPlugin.Controllers
 
         private int lastTargetId = -1;
         private int lastTargetHp = -1;
+        private float targetDamageStartTime = 0f;
+        private int targetDamageLastHp = -1;
         private string lastTargetName = "Target";
         private float lastAttackTime = 0f;
         private float lastApproachTime = 0f;
@@ -33,6 +36,8 @@ namespace RebuildBotPlugin.Controllers
             CurrentTargetName = "None";
             CurrentTargetHp = 0;
             CurrentTargetMaxHp = 0;
+            targetDamageStartTime = 0f;
+            targetDamageLastHp = -1;
             lastAttackLogTime = 0f;
             lastApproachLogTime = 0f;
             lastArrowCheckTime = 0f;
@@ -49,6 +54,8 @@ namespace RebuildBotPlugin.Controllers
                 CurrentTargetName = "None";
                 CurrentTargetHp = 0;
                 CurrentTargetMaxHp = 0;
+                targetDamageStartTime = 0f;
+                targetDamageLastHp = -1;
             }
         }
 
@@ -58,7 +65,8 @@ namespace RebuildBotPlugin.Controllers
             if (netManager == null || netManager.EntityList == null || CurrentLockedTargetId == -1) return null;
 
             if (netManager.EntityList.TryGetValue(CurrentLockedTargetId, out var lockedEntity) &&
-                lockedEntity != null && lockedEntity.IsCharacterAlive && lockedEntity.Hp > 0 && !lockedEntity.IsAlly)
+                lockedEntity != null && lockedEntity.IsCharacterAlive && lockedEntity.Hp > 0 && !lockedEntity.IsAlly &&
+                !SkillController.IsEntityHidden(lockedEntity))
             {
                 float dist = Vector2.Distance(playerPos, lockedEntity.CellPosition);
                 if (dist <= BotConfigManager.Current.SearchRadius * 1.5f)
@@ -84,6 +92,28 @@ namespace RebuildBotPlugin.Controllers
                 netManager.ChangePlayerSitStand(false);
             }
 
+            // AMMO GUARD: If character is using a Bow and is completely out of arrows, abort combat immediately!
+            if (ArrowHelper.IsBowUserOutOfAmmo(player))
+            {
+                CurrentLockedTargetId = -1;
+                lastTargetId = -1;
+                if (currentState == BotState.AttackingTarget || currentState == BotState.ApproachingTarget)
+                    currentState = BotState.Idle;
+
+                if (now - lastAttackLogTime >= 5.0f)
+                {
+                    BotEngine.Instance?.LogEvent($"[Combat] Out of arrows! Cannot attack {target.Name}. Disengaging.");
+                    lastAttackLogTime = now;
+                }
+
+                // If town restock is enabled, trigger town routine right away
+                if (BotConfigManager.Current.AutoRestockOnLowSupplies && BotEngine.Instance?.TownRoutine != null && !BotEngine.Instance.TownRoutine.IsActive)
+                {
+                    BotEngine.Instance.TownRoutine.StartRoutine("Out of arrows in combat");
+                }
+                return;
+            }
+
             // Keep track of engaged target identity
             CurrentTargetName = target.Name;
             CurrentTargetHp = target.Hp;
@@ -107,12 +137,25 @@ namespace RebuildBotPlugin.Controllers
                 targetApproachStartTime = now;
                 targetApproachProgressTime = now;
                 lastDistanceToTarget = dist;
+                targetDamageStartTime = now;
+                targetDamageLastHp = target.Hp;
                 navigation.ResetWander(); // Halt wander pre-click step immediately
 
-                // Auto-equip best arrow for target if character is Archer class
-                if (BotConfigManager.Current.AutoEquipBestArrow)
+                // Auto-equip arrow for bow users
+                if (ArrowHelper.IsBowUser(player))
                 {
-                    Services.ArrowHelper.EquipBestArrowForTarget(netManager, target);
+                    if (BotConfigManager.Current.AutoEquipBestArrow)
+                    {
+                        Services.ArrowHelper.EquipBestArrowForTarget(netManager, target);
+                    }
+                    else
+                    {
+                        var state = PlayerState.Instance;
+                        if (state != null && state.AmmoId <= 0)
+                        {
+                            Services.ArrowHelper.EquipAnyAvailableArrow(netManager);
+                        }
+                    }
                 }
 
                 // Immediately command server to attack/pursue target
@@ -121,16 +164,31 @@ namespace RebuildBotPlugin.Controllers
 
                 BotEngine.Instance?.LogEvent($"[Combat] Engaged {target.Name} (ID: {target.Id}, dist: {dist:F1} tiles). Initiating attack pursuit!");
             }
-            else if (BotConfigManager.Current.AutoEquipBestArrow && now - lastArrowCheckTime > 3.0f)
+            else if (now - lastArrowCheckTime > 2.0f)
             {
-                // In-combat watchdog: only re-check inventory if currently out of equipped arrows
+                // In-combat watchdog: ensure equipped arrow is active
                 lastArrowCheckTime = now;
                 var state = PlayerState.Instance;
-                if (state != null && state.AmmoId == 0)
+                if (state != null && state.AmmoId <= 0 && ArrowHelper.IsBowUser(player))
                 {
-                    Services.ArrowHelper.EquipBestArrowForTarget(netManager, target);
+                    if (!Services.ArrowHelper.EquipBestArrowForTarget(netManager, target))
+                    {
+                        Services.ArrowHelper.EquipAnyAvailableArrow(netManager);
+                    }
                 }
             }
+
+            // Track damage dealt to target
+            if (target.Hp < targetDamageLastHp)
+            {
+                targetDamageLastHp = target.Hp;
+                targetDamageStartTime = now; // Progress confirmed! Reset watchdog
+            }
+            else if (target.Hp > targetDamageLastHp)
+            {
+                targetDamageLastHp = target.Hp; // Monster healed or HP sync
+            }
+
             lastTargetId = target.Id;
             lastTargetHp = target.Hp;
 
@@ -147,7 +205,7 @@ namespace RebuildBotPlugin.Controllers
             }
 
             // If player is actively channeling/casting a spell, wait for completion
-            if (player.IsCasting)
+            if (SkillController.IsPlayerCasting(player))
             {
                 currentState = BotState.AttackingTarget;
                 return;
@@ -159,25 +217,78 @@ namespace RebuildBotPlugin.Controllers
 
             if (dist <= combatRange && hasLos)
             {
-                targetApproachStartTime = now; // Reset timeout while actively attacking
-                targetApproachProgressTime = now;
-                lastDistanceToTarget = dist;
+                float timeWithoutDamage = now - targetDamageStartTime;
 
-                if (now - lastAttackTime >= BotConfigManager.Current.AttackCooldownSeconds)
+                // Watchdog: If in attack range and sending attacks, but target HP hasn't dropped after 5.0s,
+                // server geometry / Bresenham blocked LOS or target is unreachable. Abandon and blacklist!
+                if (timeWithoutDamage >= 5.0f)
                 {
-                    netManager.SendAttack(target.Id);
-                    lastAttackTime = now;
-                    currentState = BotState.AttackingTarget;
+                    targeting.MarkUnreachable(target.Id, 15.0f);
+                    targeting.UnregisterAttacker(target.Id);
+                    CurrentLockedTargetId = -1;
+                    lastTargetId = -1;
+                    currentState = BotState.Idle;
+                    BotEngine.Instance?.LogEvent($"[Combat] Abandoning unreachable target {target.Name} (ID: {target.Id}) - 0 damage dealt after {timeWithoutDamage:F1}s at range {dist:F1} (likely blocked LOS/obstacle). Blacklisting for 15s.");
+                    return;
+                }
 
-                    if (now - lastAttackLogTime >= 1.5f || lastTargetHp != target.Hp)
+                // Adaptive repositioning: if ranged (dist > 3.0f) and attacks haven't connected after 2.0s,
+                // step closer to clear potential wall/corner line-of-sight obstruction before giving up.
+                bool tryRepositionCloser = (dist > 3.0f && timeWithoutDamage >= 2.0f);
+
+                if (!tryRepositionCloser)
+                {
+                    targetApproachStartTime = now; // Reset timeout while actively attacking
+                    targetApproachProgressTime = now;
+                    lastDistanceToTarget = dist;
+
+                    if (now - lastAttackTime >= BotConfigManager.Current.AttackCooldownSeconds)
                     {
-                        BotEngine.Instance?.LogEvent($"[Combat] Attacking {target.Name} (ID: {target.Id}, dist: {dist:F1} <= {combatRange:F1}) [HP: {target.Hp}/{target.MaxHp}].");
-                        lastAttackLogTime = now;
+                        netManager.SendAttack(target.Id);
+                        lastAttackTime = now;
+                        currentState = BotState.AttackingTarget;
+
+                        if (now - lastAttackLogTime >= 1.5f)
+                        {
+                            BotEngine.Instance?.LogEvent($"[Combat] Attacking {target.Name} (ID: {target.Id}, dist: {dist:F1} <= {combatRange:F1}) [HP: {target.Hp}/{target.MaxHp}].");
+                            lastAttackLogTime = now;
+                        }
+                    }
+                }
+                else
+                {
+                    // Reposition closer towards attack tile to clear blocked angle
+                    currentState = BotState.ApproachingTarget;
+                    if (now - lastApproachTime >= nextApproachDelay)
+                    {
+                        float closerRange = Mathf.Max(2.5f, dist - 2.5f);
+                        Vector2Int attackTile = navigation.GetAttackPosition(player.CellPosition, target.CellPosition, closerRange);
+                        if (attackTile != Vector2Int.zero)
+                        {
+                            navigation.NavigateTowards(player.CellPosition, attackTile, avoidPortals: BotConfigManager.Current.AvoidPortalsWhileWandering, hopDistance: 8);
+                            lastApproachTime = now;
+                            nextApproachDelay = UnityEngine.Random.Range(0.18f, 0.32f);
+
+                            if (now - lastAttackTime >= 1.0f)
+                            {
+                                netManager.SendAttack(target.Id);
+                                lastAttackTime = now;
+                            }
+
+                            if (now - lastApproachLogTime >= 1.5f)
+                            {
+                                BotEngine.Instance?.LogEvent($"[Combat] Repositioning closer to {target.Name} (ID: {target.Id}, dist: {dist:F1}) - attacks not connecting, seeking better LOS.");
+                                lastApproachLogTime = now;
+                            }
+                        }
                     }
                 }
             }
             else
             {
+                // Reset damage timer while approaching distant target
+                targetDamageStartTime = now;
+
                 // If character made measurable progress towards target, refresh watchdog timer
                 if (dist < lastDistanceToTarget - 0.5f)
                 {
@@ -188,10 +299,12 @@ namespace RebuildBotPlugin.Controllers
                 // Timeout watchdog: abandon ONLY if making NO progress closing distance for > 5.0s, or total approach exceeds 15.0s
                 if ((now - targetApproachProgressTime > 5.0f) || (now - targetApproachStartTime > 15.0f))
                 {
-                    targeting.MarkUnreachable(target.Id, 10.0f);
+                    targeting.MarkUnreachable(target.Id, 15.0f);
+                    targeting.UnregisterAttacker(target.Id);
                     CurrentLockedTargetId = -1;
                     lastTargetId = -1;
-                    BotEngine.Instance?.LogEvent($"[Combat] Abandoning unreachable target {target.Name} (ID: {target.Id}) (no progress for {(now - targetApproachProgressTime):F1}s). Blacklisting for 10s.");
+                    currentState = BotState.Idle;
+                    BotEngine.Instance?.LogEvent($"[Combat] Abandoning unreachable target {target.Name} (ID: {target.Id}) (no progress for {(now - targetApproachProgressTime):F1}s). Blacklisting for 15s.");
                     return;
                 }
 
@@ -207,8 +320,10 @@ namespace RebuildBotPlugin.Controllers
                         (BotConfigManager.Current.AvoidPortalsWhileWandering && WorldGraph.Instance.IsNearPortal(netManager.CurrentMap, attackTile, BotConfigManager.Current.PortalSafetyRadius)))
                     {
                         targeting.MarkUnreachable(target.Id, 15.0f);
+                        targeting.UnregisterAttacker(target.Id);
                         CurrentLockedTargetId = -1;
                         lastTargetId = -1;
+                        currentState = BotState.Idle;
                         BotEngine.Instance?.LogEvent($"[Combat] Target {target.Name} (ID: {target.Id}) is inside portal safety zone ({BotConfigManager.Current.PortalSafetyRadius:F0} tiles). Abandoning target to avoid accidental warp.");
                         return;
                     }

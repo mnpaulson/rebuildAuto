@@ -411,21 +411,28 @@ namespace RebuildBotPlugin.Controllers
             foundItem = default;
             if (!InventoryHelper.TryGetInventoryData(out var inv) || inv == null) return false;
 
+            if (bagSlotId >= 0 && InventoryHelper.TryGetInventoryItem(bagSlotId, out var directItem) && directItem.Count > 0 && directItem.ItemData != null)
+            {
+                foundItem = directItem;
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(itemName)) return false;
+
+            string normalizedTarget = itemName.Trim().Replace('_', ' ');
+
+            // Exact match (case-insensitive, underscore-insensitive)
             foreach (var kvp in inv)
             {
                 var item = kvp.Value;
-                if (item == null || item.Count <= 0 || item.ItemData == null) continue;
+                if (item.Count <= 0 || item.ItemData == null) continue;
 
-                if (bagSlotId >= 0 && item.BagSlotId == bagSlotId)
-                {
-                    foundItem = item;
-                    return true;
-                }
+                string name = item.ItemData.Name;
+                string code = item.ItemData.Code;
 
-                if (!string.IsNullOrWhiteSpace(itemName) &&
-                    (string.Equals(item.ItemData.Name, itemName, StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(item.ItemData.Code, itemName, StringComparison.OrdinalIgnoreCase) ||
-                     item.ItemData.Name.IndexOf(itemName, StringComparison.OrdinalIgnoreCase) >= 0))
+                if (string.Equals(name, itemName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(code, itemName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name?.Replace('_', ' '), normalizedTarget, StringComparison.OrdinalIgnoreCase))
                 {
                     foundItem = item;
                     return true;
@@ -434,18 +441,62 @@ namespace RebuildBotPlugin.Controllers
             return false;
         }
 
+        public static bool TryFindBestItemInInventory(string itemName, out InventoryItem foundItem)
+        {
+            foundItem = default;
+            if (!InventoryHelper.TryGetInventoryData(out var inv) || inv == null) return false;
+            if (string.IsNullOrWhiteSpace(itemName)) return false;
+
+            string normalizedTarget = itemName.Trim().Replace('_', ' ');
+            int bestRefine = -1;
+            bool found = false;
+
+            foreach (var kvp in inv)
+            {
+                var item = kvp.Value;
+                if (item == null || item.Count <= 0 || item.ItemData == null) continue;
+
+                string name = item.ItemData.Name;
+                string code = item.ItemData.Code;
+
+                if (string.Equals(name, itemName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(code, itemName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name?.Replace('_', ' '), normalizedTarget, StringComparison.OrdinalIgnoreCase))
+                {
+                    int refine = item.Type == ItemType.UniqueItem ? (int)item.UniqueItem.Refine : 0;
+                    if (!found || refine > bestRefine)
+                    {
+                        bestRefine = refine;
+                        foundItem = item;
+                        found = true;
+                    }
+                }
+            }
+            return found;
+        }
+
         public static int GetRefineSafeLimit(ItemData dat)
         {
             if (dat == null) return 4;
+            if (ShopRegistry.TryGetEntry(dat.Name, out var entry) && entry.WeaponRank > 0)
+            {
+                switch (entry.WeaponRank)
+                {
+                    case 1: return 7;
+                    case 2: return 6;
+                    case 3: return 5;
+                    case 4: return 4;
+                }
+            }
             if (dat.ItemClass == ItemClass.Equipment) return 4; // Armor: +4
             if (dat.ItemClass == ItemClass.Weapon)
             {
                 switch (dat.ItemRank)
                 {
-                    case 1: return 7; // Level 1 weapon: +7
-                    case 2: return 6; // Level 2 weapon: +6
-                    case 3: return 5; // Level 3 weapon: +5
-                    case 4: return 4; // Level 4 weapon: +4
+                    case 0: return 7; // Level 1 weapon: +7
+                    case 1: return 6; // Level 2 weapon: +6
+                    case 2: return 5; // Level 3 weapon: +5
+                    case 3: return 4; // Level 4 weapon: +4
                 }
             }
             return 4;
@@ -454,15 +505,26 @@ namespace RebuildBotPlugin.Controllers
         public static int GetRefineOreId(ItemData dat)
         {
             if (dat == null) return 1010; // Phracon default
-            if (dat.ItemClass == ItemClass.Equipment) return 985; // Elunium for armor
-            if (dat.ItemClass == ItemClass.Weapon)
+            if (ShopRegistry.TryGetEntry(dat.Name, out var entry) && entry.WeaponRank > 0)
             {
-                switch (dat.ItemRank)
+                switch (entry.WeaponRank)
                 {
                     case 1: return 1010; // Phracon
                     case 2: return 1011; // Emveretarcon
                     case 3: return 984;  // Oridecon
                     case 4: return 984;  // Oridecon
+                }
+            }
+            if (dat.ItemClass == ItemClass.Equipment) return 985; // Elunium for armor
+            if (dat.ItemClass == ItemClass.Weapon)
+            {
+                switch (dat.ItemRank)
+                {
+                    case 0: return 1010; // Phracon
+                    case 1: return 1011; // Emveretarcon
+                    case 2: return 984;  // Oridecon
+                    case 3: return 984;  // Oridecon
+                    default: return 984;
                 }
             }
             return 1010;

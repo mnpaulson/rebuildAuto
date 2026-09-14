@@ -11,6 +11,7 @@ const CONFIG_CATEGORIES = [
   { id: 'combat', label: '⚔️ Combat & Movement', description: 'Attack, target radius, map destination, and wander controls' },
   { id: 'survival', label: '🛡️ Survival & Recovery', description: 'Potion triggers, emergency wings, sit recovery, and buffs' },
   { id: 'town', label: '🎒 Town & Inventory', description: 'Restock limits, weight thresholds, and loot storage/vendor rules' },
+  { id: 'party', label: '🎉 Party Time', description: 'Party coordination, follow distance, support roles, and party combat behaviors' },
   { id: 'monsters', label: '👾 Monsters & Targeting', description: 'Priority monsters, whitelists, blacklists, and avoidance' },
   { id: 'progression', label: '📈 Progression & Class', description: 'Auto stat/skill allocation, job change, and bard rewards' },
   { id: 'system', label: '⚙️ System & Low-Spec', description: 'Reconnect handling, logging, FPS caps, and low-spec mode' }
@@ -286,14 +287,6 @@ const CONFIG_SCHEMA = [
     default: 90
   },
   {
-    id: 'AutoReturnOnOutOfHpItems',
-    label: 'Return to Town on Zero Supplies',
-    description: 'Initiates town restock if out of potions or essential ammo.',
-    category: 'town',
-    type: 'boolean',
-    default: true
-  },
-  {
     id: 'AutoRestock',
     label: 'Auto Restock from Kafra / Vendors',
     description: 'Purchases or withdraws necessary consumable supplies in town.',
@@ -357,6 +350,177 @@ const CONFIG_SCHEMA = [
     category: 'town',
     type: 'item-rules-table',
     default: {}
+  },
+  {
+    id: 'EquipmentTargets',
+    label: 'Equipment Targets & Upgrades',
+    description: 'Autonomous equipment purchasing and blacksmith refining. Automatically purchases and upgrades items in sequence when Level, Zeny, and Ore conditions are met.',
+    category: 'town',
+    type: 'equipment-targets-builder',
+    default: []
+  },
+
+  {
+    id: 'IsDistributor',
+    label: 'Merchant Distributor Role',
+    description: 'Designates this Merchant bot as the fleet distributor. Gathers donated loot from returning bots, sells it, stores storable items in cart, and vends 1z consumables.',
+    category: 'town',
+    type: 'boolean',
+    default: false
+  },
+  {
+    id: 'DistributorMap',
+    label: 'Distributor Post Map',
+    description: 'Map where the distributor sets up their 1z vending shop.',
+    category: 'town',
+    type: 'string',
+    default: 'prt_fild08'
+  },
+  {
+    id: 'DistributorX',
+    label: 'Distributor Post X Coordinate',
+    description: 'X tile coordinate for the distributor vending station.',
+    category: 'town',
+    type: 'number',
+    min: 0,
+    max: 500,
+    step: 1,
+    default: 150
+  },
+  {
+    id: 'DistributorY',
+    label: 'Distributor Post Y Coordinate',
+    description: 'Y tile coordinate for the distributor vending station.',
+    category: 'town',
+    type: 'number',
+    min: 0,
+    max: 500,
+    step: 1,
+    default: 360
+  },
+  {
+    id: 'VendingShopTitle',
+    label: 'Vending Shop Title',
+    description: 'Title of the 1 Zeny consumable vending shop opened by the distributor.',
+    category: 'town',
+    type: 'string',
+    default: 'Fleet Depot'
+  },
+  {
+    id: 'VendConsumables',
+    label: 'Vended Consumables & Target Stock (1z)',
+    description: 'Consumable items stocked in cart and sold to peer bots at 1 Zeny, configured line-by-line with target quantities.',
+    category: 'town',
+    type: 'vend-consumables-table',
+    default: {
+      "Red_Potion": 100,
+      "Concentration_Potion": 20,
+      "Awakening_Potion": 20,
+      "Butterfly_Wing": 100,
+      "Fly_Wing": 500
+    }
+  },
+  {
+    id: 'DistributorOverrideNpcEnabled',
+    label: 'Override NPC Vendor Enabled',
+    description: 'When enabled, the distributor will sell loot and purchase restock supplies at a specified NPC vendor instead of default town NPCs.',
+    category: 'town',
+    type: 'boolean',
+    default: false
+  },
+  {
+    id: 'DistributorOverrideNpcMap',
+    label: 'Override NPC Map',
+    description: 'Map containing the override NPC vendor.',
+    category: 'town',
+    type: 'string',
+    default: 'prt_fild08'
+  },
+  {
+    id: 'DistributorOverrideNpcX',
+    label: 'Override NPC X Coordinate',
+    description: 'X coordinate of the override NPC vendor.',
+    category: 'town',
+    type: 'number',
+    min: 0,
+    max: 500,
+    step: 1,
+    default: 0
+  },
+  {
+    id: 'DistributorOverrideNpcY',
+    label: 'Override NPC Y Coordinate',
+    description: 'Y coordinate of the override NPC vendor.',
+    category: 'town',
+    type: 'number',
+    min: 0,
+    max: 500,
+    step: 1,
+    default: 0
+  },
+
+  // --------------------------------------------------------------------------
+  // Category: Party Time
+  // --------------------------------------------------------------------------
+  {
+    id: 'SuppressFleeWhilePartied',
+    label: 'Suppress flee behaviour while partied?',
+    description: 'When enabled, bots in a party will never flee from monsters, sit-flee, or emergency teleport away, staying together with their party.',
+    category: 'party',
+    type: 'boolean',
+    default: true
+  },
+  {
+    id: 'PartyEnabled',
+    label: 'Party Mode Automation',
+    description: 'Enables autonomous fleet party coordination, leader following, and shared combat targeting.',
+    category: 'party',
+    type: 'boolean',
+    default: false
+  },
+  {
+    id: 'PartyName',
+    label: 'Party Channel Name',
+    description: 'Shared party channel identifier used by bots to discover each other (e.g. MyParty).',
+    category: 'party',
+    type: 'string',
+    default: ''
+  },
+  {
+    id: 'IsPartyLeader',
+    label: 'Party Leader Role',
+    description: 'Designates this bot as the party leader. Followers will follow, assist, and protect this character.',
+    category: 'party',
+    type: 'boolean',
+    default: false
+  },
+  {
+    id: 'IsPartySupport',
+    label: 'Party Support / Healer Role',
+    description: 'Designates this bot as dedicated support (Acolyte/Priest). Focuses on buffing, healing, and following without attacking.',
+    category: 'party',
+    type: 'boolean',
+    default: false
+  },
+  {
+    id: 'IsPartyLooter',
+    label: 'Party Looter Role',
+    description: 'Designates this bot as dedicated looter. Prioritizes scooping up all items dropped by defeated enemies in the party.',
+    category: 'party',
+    type: 'boolean',
+    default: false
+  },
+  {
+    id: 'PartyFollowDistance',
+    label: 'Follow Distance (Tiles)',
+    description: 'Desired tile distance followers maintain behind the party leader.',
+    category: 'party',
+    type: 'number',
+    min: 1.0,
+    max: 10.0,
+    step: 0.5,
+    unit: 'tiles',
+    default: 3.0
   },
 
   // --------------------------------------------------------------------------

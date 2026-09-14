@@ -69,6 +69,7 @@ namespace RebuildBotPlugin.Models
         public string AccountId { get; set; } = "";
         public string Username { get; set; } = "";
         public string Password { get; set; } = "";
+        public bool IsNewAccount { get; set; } = false;
         public List<CharacterEntry> Characters { get; set; } = new List<CharacterEntry>();
     }
 
@@ -76,5 +77,8 @@ namespace RebuildBotPlugin.Models
     {
         public string Name { get; set; } = "";
         public int Slot { get; set; } = 0;
+        public string Gender { get; set; } = "Male";
+        public List<int> StartingStats { get; set; } = null;
     }
 }
+

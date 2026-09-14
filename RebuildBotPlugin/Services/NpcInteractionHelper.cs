@@ -346,10 +346,152 @@ namespace RebuildBotPlugin.Services
             return true;
         }
 
+        private static float ghostInteractionStartTime = 0f;
+
         /// <summary>
-        /// Cleanly close any open NPC UI panels and reset interaction locks.
+        /// Detects and recovers from desynchronized/ghost NPC interactions where the character is
+        /// locked in an interaction on the server but no UI panel is active on the client.
         /// </summary>
-        public static void CleanupNpcUi()
+        public static bool CheckAndRecoverGhostInteraction(NetworkManager netManager, float now)
+        {
+            var cam = CameraFollower.Instance;
+            if (cam == null) return false;
+
+            bool uiVisible = (cam.DialogPanel != null && cam.DialogPanel.activeSelf) ||
+                             (cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf) ||
+                             StorageUI.Instance != null || ShopUI.Instance != null || RefineItemWindow.Instance != null;
+
+            if (cam.IsInNPCInteraction && !uiVisible)
+            {
+                if (ghostInteractionStartTime <= 0f)
+                {
+                    ghostInteractionStartTime = now;
+                }
+                else if (now - ghostInteractionStartTime >= 3.0f)
+                {
+                    BotEngine.Instance?.LogEvent("[NPC] Ghost interaction detected (interaction active with no UI for >3s). Clearing server lock.");
+                    CancelOrEndNpcInteraction(true);
+                    ghostInteractionStartTime = 0f;
+                    return true;
+                }
+            }
+            else
+            {
+                ghostInteractionStartTime = 0f;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Returns true if the client is currently interacting with an NPC,
+        /// has a dialogue or option window open, or is in active Kafra travel.
+        /// </summary>
+        public static bool IsInNpcInteraction()
+        {
+            var cam = CameraFollower.Instance;
+            if (cam != null)
+            {
+                if (cam.IsInNPCInteraction) return true;
+                if (cam.DialogPanel != null && cam.DialogPanel.activeSelf) return true;
+                if (cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf) return true;
+            }
+
+            if (ShopUI.Instance != null || StorageUI.Instance != null) return true;
+
+            if (BotEngine.Instance != null && BotEngine.Instance.Navigation != null && BotEngine.Instance.Navigation.IsKafraTravelActive)
+                return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Cleanly close any open NPC UI panels and send cancellation packets to the server
+        /// so that character.Player.IsInNpcInteraction is reset, freeing character movement and actions.
+        /// </summary>
+        public static void CancelOrEndNpcInteraction(bool closeUi = true)
+        {
+            var netManager = NetworkManager.Instance;
+            var cam = CameraFollower.Instance;
+
+            try
+            {
+                bool optionOpen = cam != null && cam.NpcOptionPanel != null && cam.NpcOptionPanel.activeSelf;
+                bool dialogOpen = cam != null && cam.DialogPanel != null && cam.DialogPanel.activeSelf;
+                bool storageOpen = StorageUI.Instance != null;
+                bool shopOpen = ShopUI.Instance != null;
+                bool wasInInteraction = (cam != null && cam.IsInNPCInteraction) || optionOpen || dialogOpen || storageOpen || shopOpen;
+
+                if (netManager != null && wasInInteraction)
+                {
+                    // 1. If options menu is open, try finding a Cancel/Close option first
+                    if (optionOpen)
+                    {
+                        var buttons = cam.NpcOptionPanel.GetComponentsInChildren<NpcOptionButton>(false);
+                        NpcOptionButton cancelBtn = null;
+                        if (buttons != null)
+                        {
+                            foreach (var btn in buttons)
+                            {
+                                if (btn == null) continue;
+                                string text = btn.TextBox != null ? btn.TextBox.text : "";
+                                if (text.IndexOf("Cancel", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    text.IndexOf("Close", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    text.IndexOf("Leave", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    text.IndexOf("Exit", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    text.IndexOf("Quit", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    text.IndexOf("No", StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    cancelBtn = btn;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (cancelBtn != null)
+                        {
+                            netManager.SendNpcSelectOption(cancelBtn.Id);
+                        }
+                        else
+                        {
+                            // Option 9 triggers CancelInteraction() on the server if index is unused/invalid
+                            netManager.SendNpcSelectOption(9);
+                        }
+                    }
+
+                    // 2. If storage is open, tell the server to end storage
+                    if (storageOpen)
+                    {
+                        netManager.SendEndStorage();
+                    }
+
+                    // 3. If shop is open, submit empty purchase to close shop
+                    if (shopOpen)
+                    {
+                        netManager.SubmitShopPurchase(null);
+                    }
+
+                    // 4. If dialog is open or if we were in an unconfirmed interaction state, advance dialog
+                    if (dialogOpen || (!optionOpen && !storageOpen && !shopOpen))
+                    {
+                        netManager.SendNpcAdvance();
+                        // Also send option 9 as a fallback in case server is waiting for an option with no visible UI
+                        netManager.SendNpcSelectOption(9);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                BotLog.Warn($"[NPC] Exception notifying server during interaction cancel: {ex.Message}");
+            }
+
+            if (closeUi)
+            {
+                CleanupNpcUiLocal();
+            }
+        }
+
+        private static void CleanupNpcUiLocal()
         {
             try
             {
@@ -400,6 +542,14 @@ namespace RebuildBotPlugin.Services
             {
                 BotEngine.Instance?.LogEvent($"[NPC] Note closing UI: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Cleanly close any open NPC UI panels and reset interaction locks both locally and on the server.
+        /// </summary>
+        public static void CleanupNpcUi()
+        {
+            CancelOrEndNpcInteraction(true);
         }
     }
 }

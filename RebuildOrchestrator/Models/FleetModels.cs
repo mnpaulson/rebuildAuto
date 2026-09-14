@@ -16,6 +16,22 @@ namespace RebuildOrchestrator.Models
         public double CpuPercent { get; set; } = 0.0;
         public double RamMegabytes { get; set; } = 0.0;
         public DateTime? ProcessStartTime { get; set; }
+        public bool PartyEnabled { get; set; } = false;
+        public string PartyName { get; set; } = "";
+        public bool IsPartyLeader { get; set; } = false;
+        public bool IsPartySupport { get; set; } = false;
+        public bool IsPartyLooter { get; set; } = false;
+        public bool IsInGameParty { get; set; } = false;
+        public string InGamePartyName { get; set; } = "";
+        public bool IsInGamePartyLeader { get; set; } = false;
+        public string InGamePartyLeaderName { get; set; } = "";
+        public bool IsDistributor { get; set; } = false;
+        public string DistributorMap { get; set; } = "";
+        public int DistributorX { get; set; } = 0;
+        public int DistributorY { get; set; } = 0;
+        public bool IsVendingOpen { get; set; } = false;
+        public bool IsReadyForDonations { get; set; } = false;
+        public string VendingShopTitle { get; set; } = "";
         public BotStatusData? Status { get; set; }
         public MacroStatusData? MacroStatus { get; set; }
     }
@@ -50,7 +66,32 @@ namespace RebuildOrchestrator.Models
         public bool HasActiveMacro { get; set; } = false;
         public string CurrentMacro { get; set; } = "";
         public int? ProcessId { get; set; }
+        public bool PartyEnabled { get; set; } = false;
+        public string PartyName { get; set; } = "";
+        public bool IsPartyLeader { get; set; } = false;
+        public bool IsPartySupport { get; set; } = false;
+        public bool IsPartyLooter { get; set; } = false;
+        public bool IsInGameParty { get; set; } = false;
+        public string InGamePartyName { get; set; } = "";
+        public bool IsInGamePartyLeader { get; set; } = false;
+        public string InGamePartyLeaderName { get; set; } = "";
+        public bool IsDistributor { get; set; } = false;
+        public string DistributorMap { get; set; } = "";
+        public int DistributorX { get; set; } = 0;
+        public int DistributorY { get; set; } = 0;
+        public bool IsVendingOpen { get; set; } = false;
+        public bool IsReadyForDonations { get; set; } = false;
+        public string VendingShopTitle { get; set; } = "";
+        public int TargetEntityId { get; set; } = -1;
+        public string TargetName { get; set; } = "";
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    }
+
+    public class MasterItemRule
+    {
+        public string ItemName { get; set; } = "";
+        public string Disposition { get; set; } = "Keep"; // Keep, Store, Sell
+        public int? MaxCount { get; set; } = null; // null or <= 0 is unlimited
     }
 
     public class MacroStatusData
@@ -130,4 +171,56 @@ namespace RebuildOrchestrator.Models
         public string Level { get; set; } = "Info"; // Info, Success, Warning, Error
         public string Message { get; set; } = "";
     }
+
+    public class PartyUpdateRequest
+    {
+        public string ProfileName { get; set; } = "";
+        public bool PartyEnabled { get; set; } = false;
+        public string PartyName { get; set; } = "";
+        public bool IsPartyLeader { get; set; } = false;
+        public bool IsPartySupport { get; set; } = false;
+        public bool IsPartyLooter { get; set; } = false;
+    }
+
+    public class AddBotRequest
+    {
+        public string AccountId { get; set; } = "";
+        public string Password { get; set; } = "";
+        public bool IsNewAccount { get; set; } = false;
+        public string CharacterName { get; set; } = "";
+        public int CharacterSlot { get; set; } = -1; // -1 = auto next slot
+        public string Gender { get; set; } = "Male"; // "Male" or "Female"
+        public List<int> StartingStats { get; set; } = new() { 5, 5, 5, 5, 5, 8 }; // Str, Agi, Vit, Int, Dex, Luk
+        public string TargetJob { get; set; } = "Novice";
+        public List<StatMilestoneDto> StatBuildPlan { get; set; } = new();
+        public List<SkillMilestoneDto> SkillBuildPlan { get; set; } = new();
+    }
+
+    public class StatMilestoneDto
+    {
+        public string Stat { get; set; } = "";
+        public int Target { get; set; } = 1;
+    }
+
+    public class SkillMilestoneDto
+    {
+        public string Skill { get; set; } = "";
+        public int Target { get; set; } = 1;
+    }
+
+    public class AccountSummaryItem
+    {
+        public string AccountId { get; set; } = "";
+        public string Username { get; set; } = "";
+        public List<CharacterSummaryItem> Characters { get; set; } = new();
+        public int NextAvailableSlot { get; set; } = 0; // 0, 1, 2, or -1 if full
+    }
+
+    public class CharacterSummaryItem
+    {
+        public string Name { get; set; } = "";
+        public int Slot { get; set; } = 0;
+        public string Gender { get; set; } = "Male";
+    }
 }
+

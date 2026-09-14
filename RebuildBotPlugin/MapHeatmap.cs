@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Assets.Scripts.MapEditor;
+using RebuildBotPlugin.Services;
 using UnityEngine;
 
 namespace RebuildBotPlugin
@@ -161,6 +162,12 @@ namespace RebuildBotPlugin
                         continue;
                     }
 
+                    if (BotConfigManager.Current.AvoidTrackedBosses &&
+                        BossTrackingService.Instance.IsWithinBossZone(map, centerCell, BotConfigManager.Current.BossAvoidanceRadius))
+                    {
+                        continue;
+                    }
+
                     bool isVisited = sectorVisits.TryGetValue(sectorKey, out float ts);
                     float timeSinceVisit = isVisited ? (now - ts) : 9999f;
 
@@ -230,6 +237,7 @@ namespace RebuildBotPlugin
 
                     if (!MapNavMesh.Instance.IsReachable(playerCellPos, centerCell)) continue;
                     if (BotConfigManager.Current.AvoidPortalsWhileWandering && WorldGraph.Instance.IsNearPortal(map, centerCell, portalSafetyRadius)) continue;
+                    if (BotConfigManager.Current.AvoidTrackedBosses && BossTrackingService.Instance.IsWithinBossZone(map, centerCell, BotConfigManager.Current.BossAvoidanceRadius)) continue;
 
                     float timeSinceVisit = Time.time - (sectorVisits.TryGetValue(sectorKey, out float ts) ? ts : 0f);
                     float score = timeSinceVisit;

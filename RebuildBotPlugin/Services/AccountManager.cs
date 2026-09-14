@@ -17,15 +17,21 @@ namespace RebuildBotPlugin.Services
         public static AccountRegistry Registry { get; private set; } = new AccountRegistry();
         private static bool isLoaded = false;
 
+        public static string ResolveAccountsPath()
+        {
+            if (File.Exists(DevAccountsPath)) return DevAccountsPath;
+            if (File.Exists(GameDirAccountsPath)) return GameDirAccountsPath;
+            string gameRoot = @"C:\Games\RagnarokRebuild\accounts.json";
+            if (File.Exists(gameRoot)) return gameRoot;
+            return GameDirAccountsPath;
+        }
+
         public static void LoadAccounts()
         {
             try
             {
-                string targetPath = null;
-                if (File.Exists(DevAccountsPath)) targetPath = DevAccountsPath;
-                else if (File.Exists(GameDirAccountsPath)) targetPath = GameDirAccountsPath;
-
-                if (targetPath != null)
+                string targetPath = ResolveAccountsPath();
+                if (File.Exists(targetPath))
                 {
                     string json = File.ReadAllText(targetPath);
                     if (!string.IsNullOrWhiteSpace(json))
@@ -44,6 +50,32 @@ namespace RebuildBotPlugin.Services
             }
 
             Registry = new AccountRegistry();
+        }
+
+        public static void SaveAccounts()
+        {
+            try
+            {
+                var options = new JsonSerializerOptions { WriteIndented = true, PropertyNameCaseInsensitive = true };
+                string json = JsonSerializer.Serialize(Registry, options);
+
+                string primaryPath = ResolveAccountsPath();
+                File.WriteAllText(primaryPath, json);
+
+                // Mirror if both exist
+                if (File.Exists(DevAccountsPath) && !string.Equals(primaryPath, DevAccountsPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    File.WriteAllText(DevAccountsPath, json);
+                }
+                if (File.Exists(GameDirAccountsPath) && !string.Equals(primaryPath, GameDirAccountsPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    File.WriteAllText(GameDirAccountsPath, json);
+                }
+            }
+            catch (Exception ex)
+            {
+                BotLog.Warn($"[Accounts Warning] Failed to save accounts.json: {ex.Message}");
+            }
         }
 
         public static bool TryGetCredentialsForProfile(
@@ -71,6 +103,15 @@ namespace RebuildBotPlugin.Services
             }
 
             return false;
+        }
+
+        public static bool TryGetCharacterForProfile(string profileOrCharName, out AccountEntry account, out CharacterEntry character)
+        {
+            account = null;
+            character = null;
+            if (!isLoaded) LoadAccounts();
+            if (Registry == null || string.IsNullOrWhiteSpace(profileOrCharName)) return false;
+            return Registry.TryGetAccountForProfile(profileOrCharName, out account, out character);
         }
 
         public static bool TryGetCredentialsForAccount(string accountId, out string username, out string password)

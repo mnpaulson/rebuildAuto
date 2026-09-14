@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   connectWebSocket();
   setupEventListeners();
   loadInitialLogs('all');
+  loadMasterItemRules();
 });
 
 function fetchInitialFleet() {
@@ -30,6 +31,7 @@ function fetchInitialFleet() {
     })
     .catch(() => {});
 }
+window.fetchFleetOverview = fetchInitialFleet;
 
 // WebSocket Telemetry Connection
 function connectWebSocket() {
@@ -85,6 +87,9 @@ function updateDashboard(fleet) {
   document.getElementById('kpi-fleet-exp').textContent = formatExpRate(totalExp);
   document.getElementById('kpi-fleet-zeny').textContent = formatNumber(totalZeny) + ' z';
   document.getElementById('kpi-total-kills').textContent = formatNumber(totalKills);
+
+  const countPill = document.getElementById('fleet-count-pill');
+  if (countPill) countPill.textContent = `${totalBots} Bot${totalBots === 1 ? '' : 's'} Configured`;
 
   // 2. Update Monitor Options
   const monitorSelect = document.getElementById('monitor-select');
@@ -183,6 +188,7 @@ function updateBotCardDom(card, bot) {
     'Reconnecting': 'Reconnecting',
     'DismissingNotice': 'Dismissing Notice',
     'TownRoutine': 'Town Routine',
+    'WaitingForParty': 'Waiting (Party)',
     'Wandering': 'Wandering',
     'Combat': 'In Combat',
     'Looting': 'Looting',
@@ -192,7 +198,7 @@ function updateBotCardDom(card, bot) {
     'Offline': 'Offline'
   }[state] || state;
 
-  const isTransitionState = ['Launching', 'Connecting', 'LoggingIn', 'SubmittingLogin', 'SelectingCharacter', 'AwaitingCharSelect', 'EnteringWorld', 'Reconnecting', 'DismissingNotice', 'TownRoutine'].includes(state);
+  const isTransitionState = ['Launching', 'Connecting', 'LoggingIn', 'SubmittingLogin', 'SelectingCharacter', 'AwaitingCharSelect', 'EnteringWorld', 'Reconnecting', 'DismissingNotice', 'TownRoutine', 'WaitingForParty'].includes(state);
 
   const hp = status.hp ?? status.Hp ?? 0;
   const maxHp = status.maxHp ?? status.MaxHp ?? 1;
@@ -310,6 +316,36 @@ function updateBotCardDom(card, bot) {
     banner.remove();
   }
 
+  // Update Party Strip
+  const partyEnabled = bot.partyEnabled ?? bot.PartyEnabled ?? false;
+  const partyName = bot.partyName ?? bot.PartyName ?? '';
+  const isLeader = bot.isPartyLeader ?? bot.IsPartyLeader ?? false;
+  const isSupport = bot.isPartySupport ?? bot.IsPartySupport ?? false;
+  const isLooter = bot.isPartyLooter ?? bot.IsPartyLooter ?? false;
+  const isInGamePartyLeader = bot.isInGamePartyLeader ?? bot.IsInGamePartyLeader ?? bot.status?.isInGamePartyLeader ?? bot.status?.IsInGamePartyLeader ?? false;
+  const inGamePartyName = bot.inGamePartyName ?? bot.InGamePartyName ?? bot.status?.inGamePartyName ?? bot.status?.InGamePartyName ?? '';
+
+  let partyStrip = card.querySelector('.party-strip');
+  if (partyStrip) {
+    const input = partyStrip.querySelector('.party-name-input');
+    const isInputFocused = input && document.activeElement === input;
+    const lastPartyState = `${partyEnabled}|${partyName}|${isLeader}|${isSupport}|${isLooter}|${isInGamePartyLeader}|${inGamePartyName}`;
+
+    if (!isInputFocused && partyStrip.dataset.partyState !== lastPartyState) {
+      const temp = document.createElement('div');
+      temp.innerHTML = renderPartyStripHtml(name, partyEnabled, partyName, isLeader, isSupport, isLooter, isInGamePartyLeader, inGamePartyName);
+      const newStrip = temp.firstElementChild;
+      partyStrip.replaceWith(newStrip);
+    }
+  } else {
+    const actions = card.querySelector('.card-actions');
+    if (actions) {
+      const temp = document.createElement('div');
+      temp.innerHTML = renderPartyStripHtml(name, partyEnabled, partyName, isLeader, isSupport, isLooter, isInGamePartyLeader, inGamePartyName);
+      actions.insertAdjacentElement('beforebegin', temp.firstElementChild);
+    }
+  }
+
   // Update Action Buttons ONLY when running or visibility state changes
   if (card.dataset.runningState !== isRunning.toString() || card.dataset.windowVisible !== isWindowVisible.toString()) {
     card.dataset.runningState = isRunning.toString();
@@ -364,16 +400,22 @@ function createBotCardHtml(bot) {
     'Reconnecting': 'Reconnecting',
     'DismissingNotice': 'Dismissing Notice',
     'TownRoutine': 'Town Routine',
+    'WaitingForParty': 'Waiting (Party)',
     'Wandering': 'Wandering',
     'Combat': 'In Combat',
     'Looting': 'Looting',
     'Resting': 'Resting',
     'Dead': 'Dead',
     'Disabled': 'Disabled',
-    'Offline': 'Offline'
+    'Offline': 'Offline',
+    'DistributorVending': 'Vending (1z)',
+    'DistributorRestocking': 'Restocking (Distributor)',
+    'DistributorCollectingLoot': 'Collecting Donations',
+    'DonatingToDistributor': 'Donating Loot',
+    'BuyingFromDistributor': 'Buying from Distributor'
   }[state] || state;
 
-  const isTransitionState = ['Launching', 'Connecting', 'LoggingIn', 'SubmittingLogin', 'SelectingCharacter', 'AwaitingCharSelect', 'EnteringWorld', 'Reconnecting', 'DismissingNotice', 'TownRoutine'].includes(state);
+  const isTransitionState = ['Launching', 'Connecting', 'LoggingIn', 'SubmittingLogin', 'SelectingCharacter', 'AwaitingCharSelect', 'EnteringWorld', 'Reconnecting', 'DismissingNotice', 'TownRoutine', 'WaitingForParty', 'DistributorRestocking', 'DonatingToDistributor', 'BuyingFromDistributor'].includes(state);
 
   const hp = status.hp ?? status.Hp ?? 0;
   const maxHp = status.maxHp ?? status.MaxHp ?? 1;
@@ -407,9 +449,34 @@ function createBotCardHtml(bot) {
   const currentMacro = status.currentMacro ?? status.CurrentMacro ?? '';
   const hasActiveMacro = macro.hasActiveMacro ?? macro.HasActiveMacro ?? false;
 
-  const statusBadgeClass = isRunning
-    ? (isTransitionState ? 'badge-amber' : (state === 'Disabled' ? 'badge-slate' : 'badge-emerald'))
-    : 'badge-slate';
+  let statusBadgeClass = 'badge-slate';
+  if (isRunning) {
+    if (state === 'DistributorVending') {
+      statusBadgeClass = 'badge-emerald';
+    } else if (state === 'DistributorCollectingLoot') {
+      statusBadgeClass = 'badge-cyan';
+    } else if (['DistributorRestocking', 'DonatingToDistributor', 'BuyingFromDistributor'].includes(state)) {
+      statusBadgeClass = 'badge-amber';
+    } else if (isTransitionState) {
+      statusBadgeClass = 'badge-amber';
+    } else if (state === 'Disabled') {
+      statusBadgeClass = 'badge-slate';
+    } else {
+      statusBadgeClass = 'badge-emerald';
+    }
+  }
+
+  const isDistributor = bot.isDistributor ?? bot.IsDistributor ?? status.isDistributor ?? status.IsDistributor ?? false;
+  const isVendingOpen = bot.isVendingOpen ?? bot.IsVendingOpen ?? status.isVendingOpen ?? status.IsVendingOpen ?? false;
+  const isReadyForDonations = bot.isReadyForDonations ?? bot.IsReadyForDonations ?? status.isReadyForDonations ?? status.IsReadyForDonations ?? false;
+
+  const partyEnabled = bot.partyEnabled ?? bot.PartyEnabled ?? false;
+  const partyName = bot.partyName ?? bot.PartyName ?? '';
+  const isLeader = bot.isPartyLeader ?? bot.IsPartyLeader ?? false;
+  const isSupport = bot.isPartySupport ?? bot.IsPartySupport ?? false;
+  const isLooter = bot.isPartyLooter ?? bot.IsPartyLooter ?? false;
+  const isInGamePartyLeader = bot.isInGamePartyLeader ?? bot.IsInGamePartyLeader ?? bot.status?.isInGamePartyLeader ?? bot.status?.IsInGamePartyLeader ?? false;
+  const inGamePartyName = bot.inGamePartyName ?? bot.InGamePartyName ?? bot.status?.inGamePartyName ?? bot.status?.InGamePartyName ?? '';
 
   return `
     <div class="bot-card ${isRunning ? 'running' : 'offline'}" id="card-${name}" data-running-state="${isRunning}" data-window-visible="${isWindowVisible}">
@@ -420,7 +487,12 @@ function createBotCardHtml(bot) {
           <p>${level ? `${level} ` : ''}${job}${bot.accountId ? ` · [${bot.accountId}]` : ''}</p>
         </div>
         <div class="bot-header-status">
-          <span class="badge-pill ${statusBadgeClass}">${displayState}</span>
+          <div style="display: flex; gap: 6px; align-items: center; justify-content: flex-end; flex-wrap: wrap;">
+            ${isDistributor ? `<span class="badge-pill badge-purple" title="Designated Fleet Distributor">Distributor</span>` : ''}
+            ${isDistributor && isVendingOpen ? `<span class="badge-pill badge-emerald" title="1z Shop is Open">Shop Open</span>` : ''}
+            ${isDistributor && isReadyForDonations ? `<span class="badge-pill badge-cyan" title="Ready to receive item donations">Ready For Loot</span>` : ''}
+            <span class="badge-pill ${statusBadgeClass}">${displayState}</span>
+          </div>
           ${isRunning ? `<div class="bot-proc-info">${bot.processId ? `<span class="pid-tag">PID ${bot.processId}</span>` : ''}<span>${cpu} CPU</span><span>·</span><span>${ram} RAM</span></div>` : ''}
         </div>
       </div>
@@ -500,6 +572,9 @@ function createBotCardHtml(bot) {
         </div>
       ` : ''}
 
+      <!-- Party Feature Section -->
+      ${renderPartyStripHtml(name, partyEnabled, partyName, isLeader, isSupport, isLooter, isInGamePartyLeader, inGamePartyName)}
+
       <!-- Action Footer (Per-Bot Control Buttons) -->
       <div class="card-actions">
         ${isRunning ? `
@@ -518,6 +593,117 @@ function createBotCardHtml(bot) {
       </div>
     </div>
   `;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderPartyStripHtml(name, partyEnabled, partyName, isLeader, isSupport, isLooter, isInGamePartyLeader, inGamePartyName) {
+  return `
+    <div class="party-strip" id="party-strip-${name}" data-party-state="${partyEnabled}|${partyName}|${isLeader}|${isSupport}|${isLooter}|${isInGamePartyLeader}|${inGamePartyName}">
+      <div class="party-strip-header">
+        <button class="btn btn-sm ${partyEnabled ? 'btn-emerald' : 'btn-secondary'}" onclick="toggleParty('${name}')" title="Toggle party active/disabled">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>Party: ${partyEnabled ? 'Active' : 'Disabled'}</span>
+        </button>
+        ${partyEnabled && isInGamePartyLeader ? `<span class="badge-pill badge-amber" title="In-Game Party Leader: authorizes party creation and invites">★ In-Game Leader</span>` : ''}
+        ${partyEnabled && isLeader ? `<span class="badge-pill badge-purple" title="Patrol/Combat Lead: followers follow this bot">Patrol Lead</span>` : ''}
+        ${partyEnabled && !isLeader && isSupport ? `<span class="badge-pill badge-blue">Support</span>` : ''}
+        ${partyEnabled && !isLeader && !isSupport ? `<span class="badge-pill badge-emerald">Combat</span>` : ''}
+        ${partyEnabled && isLooter ? `<span class="badge-pill badge-cyan" title="Looter: prioritizes picking up items dropped by defeated enemies">Looter</span>` : ''}
+      </div>
+      ${partyEnabled ? `
+        <div class="party-controls">
+          <input type="text" class="party-name-input" placeholder="Party Name" value="${escapeHtml(partyName)}" onchange="updatePartyName('${name}', this.value)" title="Party Name" />
+          <label class="party-checkbox-label" title="Designate this bot as Patrol/Combat Lead (followers follow this bot)">
+            <input type="checkbox" ${isLeader ? 'checked' : ''} onchange="togglePartyLeader('${name}', this.checked)" />
+            Lead (Patrol)
+          </label>
+          <label class="party-checkbox-label" title="Support: stay close to leader and do not attack monsters">
+            <input type="checkbox" ${isSupport ? 'checked' : ''} onchange="togglePartySupport('${name}', this.checked)" />
+            Support
+          </label>
+          <label class="party-checkbox-label" title="Looter: prioritizes picking up all items dropped by defeated enemies">
+            <input type="checkbox" ${isLooter ? 'checked' : ''} onchange="togglePartyLooter('${name}', this.checked)" />
+            Looter
+          </label>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function getBotPartyData(profileName) {
+  if (!currentFleet || !currentFleet.profiles) return null;
+  return currentFleet.profiles.find(p => (p.profileName || p.ProfileName) === profileName);
+}
+
+function sendPartyUpdate(profileName, partyEnabled, partyName, isLeader, isSupport, isLooter) {
+  fetch('/api/bot/party', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      profileName: profileName,
+      partyEnabled: partyEnabled,
+      partyName: partyName,
+      isPartyLeader: isLeader,
+      isPartySupport: isSupport,
+      isPartyLooter: isLooter
+    })
+  }).catch(e => console.error('Error updating party:', e));
+}
+
+function toggleParty(profileName) {
+  const bot = getBotPartyData(profileName);
+  const currentEnabled = bot ? (bot.partyEnabled ?? bot.PartyEnabled ?? false) : false;
+  const partyName = bot ? (bot.partyName ?? bot.PartyName ?? '') : '';
+  const isLeader = bot ? (bot.isPartyLeader ?? bot.IsPartyLeader ?? false) : false;
+  const isSupport = bot ? (bot.isPartySupport ?? bot.IsPartySupport ?? false) : false;
+  const isLooter = bot ? (bot.isPartyLooter ?? bot.IsPartyLooter ?? false) : false;
+
+  sendPartyUpdate(profileName, !currentEnabled, partyName, isLeader, isSupport, isLooter);
+}
+
+function updatePartyName(profileName, newName) {
+  const bot = getBotPartyData(profileName);
+  const currentEnabled = bot ? (bot.partyEnabled ?? bot.PartyEnabled ?? true) : true;
+  const isLeader = bot ? (bot.isPartyLeader ?? bot.IsPartyLeader ?? false) : false;
+  const isSupport = bot ? (bot.isPartySupport ?? bot.IsPartySupport ?? false) : false;
+  const isLooter = bot ? (bot.isPartyLooter ?? bot.IsPartyLooter ?? false) : false;
+
+  sendPartyUpdate(profileName, currentEnabled, newName.trim(), isLeader, isSupport, isLooter);
+}
+
+function togglePartyLeader(profileName, isLeader) {
+  const bot = getBotPartyData(profileName);
+  const currentEnabled = bot ? (bot.partyEnabled ?? bot.PartyEnabled ?? true) : true;
+  const partyName = bot ? (bot.partyName ?? bot.PartyName ?? '') : '';
+  const isSupport = bot ? (bot.isPartySupport ?? bot.IsPartySupport ?? false) : false;
+  const isLooter = bot ? (bot.isPartyLooter ?? bot.IsPartyLooter ?? false) : false;
+
+  sendPartyUpdate(profileName, currentEnabled, partyName, isLeader, isSupport, isLooter);
+}
+
+function togglePartySupport(profileName, isSupport) {
+  const bot = getBotPartyData(profileName);
+  const currentEnabled = bot ? (bot.partyEnabled ?? bot.PartyEnabled ?? true) : true;
+  const partyName = bot ? (bot.partyName ?? bot.PartyName ?? '') : '';
+  const isLeader = bot ? (bot.isPartyLeader ?? bot.IsPartyLeader ?? false) : false;
+  const isLooter = bot ? (bot.isPartyLooter ?? bot.IsPartyLooter ?? false) : false;
+
+  sendPartyUpdate(profileName, currentEnabled, partyName, isLeader, isSupport, isLooter);
+}
+
+function togglePartyLooter(profileName, isLooter) {
+  const bot = getBotPartyData(profileName);
+  const currentEnabled = bot ? (bot.partyEnabled ?? bot.PartyEnabled ?? true) : true;
+  const partyName = bot ? (bot.partyName ?? bot.PartyName ?? '') : '';
+  const isLeader = bot ? (bot.isPartyLeader ?? bot.IsPartyLeader ?? false) : false;
+  const isSupport = bot ? (bot.isPartySupport ?? bot.IsPartySupport ?? false) : false;
+
+  sendPartyUpdate(profileName, currentEnabled, partyName, isLeader, isSupport, isLooter);
 }
 
 // Window Management Calls
@@ -778,6 +964,7 @@ function submitMacro() {
 
 // Config Modal Logic
 function openConfigModal(profileName) {
+  const bot = currentFleet?.profiles?.find(p => (p.profileName || p.ProfileName) === profileName);
   fetch(`/api/bot/${encodeURIComponent(profileName)}/config`)
     .then(r => r.text())
     .then(rawText => {
@@ -788,13 +975,13 @@ function openConfigModal(profileName) {
         parsed = {};
       }
       if (typeof initConfigEditor === 'function') {
-        initConfigEditor(profileName, parsed);
+        initConfigEditor(profileName, parsed, bot);
       }
       document.getElementById('config-modal').classList.add('open');
     })
     .catch(err => {
       if (typeof initConfigEditor === 'function') {
-        initConfigEditor(profileName, {});
+        initConfigEditor(profileName, {}, bot);
       }
       document.getElementById('config-modal').classList.add('open');
     });
@@ -806,7 +993,11 @@ function closeConfigModal() {
 
 function saveConfig() {
   const profile = document.getElementById('config-profile-target').value;
-  const raw = document.getElementById('config-json-editor').value;
+  let raw = document.getElementById('config-json-editor').value;
+
+  if (typeof currentConfigEditorMode !== 'undefined' && currentConfigEditorMode === 'form' && typeof currentConfigData !== 'undefined') {
+    raw = JSON.stringify(currentConfigData, null, 2);
+  }
 
   fetch(`/api/bot/${encodeURIComponent(profile)}/config`, {
     method: 'POST',
@@ -1026,6 +1217,198 @@ function createTerminalLineHtml(item) {
 function clearActiveLogs() {
   botLogs[activeLogTab] = [];
   renderActiveLogs();
+}
+
+// --------------------------------------------------------------------------
+// Master Item Rules Management
+// --------------------------------------------------------------------------
+
+let masterItemRules = [];
+let masterRulesFilter = 'all'; // 'all' | 'Sell' | 'Store' | 'Keep'
+let masterRulesSearch = '';
+
+function loadMasterItemRules() {
+  fetch('/api/master-item-rules')
+    .then(r => r.json())
+    .then(rules => {
+      masterItemRules = Array.isArray(rules) ? rules : [];
+      renderMasterItemRules();
+    })
+    .catch(err => {
+      console.error('Failed to load master item rules:', err);
+    });
+}
+
+function renderMasterItemRules() {
+  const tbody = document.getElementById('master-rules-tbody');
+  const countPill = document.getElementById('master-rules-count-pill');
+  if (!tbody) return;
+
+  if (countPill) {
+    countPill.textContent = `${masterItemRules.length} Rules Configured`;
+  }
+
+  let entries = [...masterItemRules];
+
+  // Apply search filter
+  if (masterRulesSearch) {
+    const q = masterRulesSearch.toLowerCase();
+    entries = entries.filter(r => (r.itemName || r.ItemName || '').toLowerCase().includes(q));
+  }
+
+  // Apply disposition filter
+  if (masterRulesFilter !== 'all') {
+    entries = entries.filter(r => (r.disposition || r.Disposition || '').toLowerCase() === masterRulesFilter.toLowerCase());
+  }
+
+  if (entries.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">No master item rules match the current filter.</td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = entries.map(rule => {
+    const name = rule.itemName || rule.ItemName || '';
+    const disp = rule.disposition || rule.Disposition || 'Keep';
+    const maxVal = (rule.maxCount !== undefined && rule.maxCount !== null && rule.maxCount > 0)
+      ? rule.maxCount
+      : ((rule.MaxCount !== undefined && rule.MaxCount !== null && rule.MaxCount > 0) ? rule.MaxCount : '');
+
+    return `
+      <tr>
+        <td style="font-weight: 600; color: #f1f5f9;">${escapeHtml(name)}</td>
+        <td style="text-align: center;">
+          <div class="action-toggle-group">
+            <button type="button" 
+                    class="action-btn sell ${disp === 'Sell' ? 'active' : ''}" 
+                    onclick="updateMasterItemRuleDisposition('${escapeHtml(name)}', 'Sell')">Sell</button>
+            <button type="button" 
+                    class="action-btn store ${disp === 'Store' ? 'active' : ''}" 
+                    onclick="updateMasterItemRuleDisposition('${escapeHtml(name)}', 'Store')">Store</button>
+            <button type="button" 
+                    class="action-btn keep ${disp === 'Keep' ? 'active' : ''}" 
+                    onclick="updateMasterItemRuleDisposition('${escapeHtml(name)}', 'Keep')">Keep</button>
+          </div>
+        </td>
+        <td style="text-align: center;">
+          <input type="number" 
+                 class="config-table-input" 
+                 style="width: 80px; text-align: center; margin: 0 auto;" 
+                 placeholder="∞" 
+                 min="0"
+                 value="${maxVal}" 
+                 onchange="updateMasterItemRuleMax('${escapeHtml(name)}', this.value)">
+        </td>
+        <td style="text-align: center;">
+          <button type="button" class="btn-delete-row" onclick="deleteMasterItemRule('${escapeHtml(name)}')">&times;</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function onMasterRulesSearch(query) {
+  masterRulesSearch = query;
+  renderMasterItemRules();
+}
+
+function setMasterRulesFilter(filter) {
+  masterRulesFilter = filter;
+  ['all', 'sell', 'store', 'keep'].forEach(f => {
+    const btn = document.getElementById(`master-filter-${f}`);
+    if (btn) {
+      if (f === filter.toLowerCase()) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    }
+  });
+  renderMasterItemRules();
+}
+
+function addMasterItemRule() {
+  const nameInput = document.getElementById('new-master-rule-name');
+  const dispSelect = document.getElementById('new-master-rule-disposition');
+  const maxInput = document.getElementById('new-master-rule-max');
+  if (!nameInput || !dispSelect) return;
+
+  const name = nameInput.value.trim();
+  const disp = dispSelect.value;
+  const maxCountVal = maxInput ? parseInt(maxInput.value, 10) : 0;
+
+  if (!name) return;
+
+  const existingIdx = masterItemRules.findIndex(r => (r.itemName || r.ItemName || '').toLowerCase() === name.toLowerCase());
+  const ruleObj = {
+    ItemName: name,
+    Disposition: disp,
+    MaxCount: (!isNaN(maxCountVal) && maxCountVal > 0) ? maxCountVal : null
+  };
+
+  if (existingIdx >= 0) {
+    masterItemRules[existingIdx] = ruleObj;
+  } else {
+    masterItemRules.push(ruleObj);
+  }
+
+  nameInput.value = '';
+  if (maxInput) maxInput.value = '';
+
+  saveMasterItemRules();
+}
+
+function updateMasterItemRuleDisposition(name, disp) {
+  const rule = masterItemRules.find(r => (r.itemName || r.ItemName) === name);
+  if (rule) {
+    rule.Disposition = disp;
+    rule.disposition = disp;
+    saveMasterItemRules();
+  }
+}
+
+function updateMasterItemRuleMax(name, valStr) {
+  const rule = masterItemRules.find(r => (r.itemName || r.ItemName) === name);
+  if (rule) {
+    const val = parseInt(valStr, 10);
+    const maxVal = (!isNaN(val) && val > 0) ? val : null;
+    rule.MaxCount = maxVal;
+    rule.maxCount = maxVal;
+    saveMasterItemRules();
+  }
+}
+
+function deleteMasterItemRule(name) {
+  masterItemRules = masterItemRules.filter(r => (r.itemName || r.ItemName) !== name);
+  saveMasterItemRules();
+}
+
+function saveMasterItemRules() {
+  fetch('/api/master-item-rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(masterItemRules.map(r => ({
+      ItemName: r.ItemName || r.itemName,
+      Disposition: r.Disposition || r.disposition || 'Keep',
+      MaxCount: (r.MaxCount !== undefined && r.MaxCount !== null && r.MaxCount > 0)
+        ? r.MaxCount
+        : ((r.maxCount !== undefined && r.maxCount !== null && r.maxCount > 0) ? r.maxCount : null)
+    })))
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data && data.rules) {
+        masterItemRules = data.rules;
+      }
+      renderMasterItemRules();
+    })
+    .catch(err => {
+      console.error('Failed to save master item rules:', err);
+      renderMasterItemRules();
+    });
 }
 
 // Event Listeners Setup

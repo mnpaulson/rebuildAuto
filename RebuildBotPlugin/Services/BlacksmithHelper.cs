@@ -32,6 +32,7 @@ namespace RebuildBotPlugin.Services
             Idle,
             Validating,
             TravelingToBlacksmith,
+            ExchangingRoughOres,
             BuyingOres,
             TalkingToHollgrehenn,
             ExecutingRefine,
@@ -52,6 +53,8 @@ namespace RebuildBotPlugin.Services
         private int currentRefineLevel = 0;
         private int requiredOreId = 1010;
         private int missingOreCount = 0;
+        private int maxAttempts = -1;
+        private int attemptsMade = 0;
 
         /// <summary>
         /// Get the Zeny fee charged by Hollgrehenn per refine attempt.
@@ -59,15 +62,26 @@ namespace RebuildBotPlugin.Services
         public static int GetRefineFee(ItemData dat)
         {
             if (dat == null) return 200;
+            if (ShopRegistry.TryGetEntry(dat.Name, out var entry) && entry.WeaponRank > 0)
+            {
+                switch (entry.WeaponRank)
+                {
+                    case 1: return 200;
+                    case 2: return 1000;
+                    case 3: return 5000;
+                    case 4: return 10000;
+                }
+            }
             if (dat.ItemClass == ItemClass.Equipment) return 2000; // Armor: 2000z
             if (dat.ItemClass == ItemClass.Weapon)
             {
                 switch (dat.ItemRank)
                 {
-                    case 1: return 200;   // Level 1 weapon: 200z
-                    case 2: return 1000;  // Level 2 weapon: 1000z
-                    case 3: return 5000;  // Level 3 weapon: 5000z
-                    case 4: return 10000; // Level 4 weapon: 10000z
+                    case 0: return 200;   // Level 1 weapon: 200z
+                    case 1: return 1000;  // Level 2 weapon: 1000z
+                    case 2: return 5000;  // Level 3 weapon: 5000z
+                    case 3: return 10000; // Level 4 weapon: 10000z
+                    default: return 5000;
                 }
             }
             return 200;
@@ -157,12 +171,14 @@ namespace RebuildBotPlugin.Services
         /// <summary>
         /// Start an autonomous Blacksmith upgrade sequence.
         /// </summary>
-        public bool Begin(string itemName, int targetLevel, bool safeLimitOnly, out string error)
+        public bool Begin(string itemName, int targetLevel, bool safeLimitOnly, out string error, int maxAttemptsCount = -1)
         {
             error = null;
             targetItemName = itemName;
             targetRefineLevel = targetLevel;
             stopAtSafeLimit = safeLimitOnly;
+            maxAttempts = maxAttemptsCount;
+            attemptsMade = 0;
             internalStep = 0;
             lastStepTime = Time.time;
             npcHelper.Reset();
@@ -196,24 +212,41 @@ namespace RebuildBotPlugin.Services
                 return false;
             }
 
-            // Count owned ores
-            int ownedOres = 0;
-            if (InventoryHelper.TryGetInventoryData(out var inv) && inv != null)
+            // Count owned ores (including rough ores convertable at Dietrich)
+            int roughOreId = (requiredOreId == 984) ? 756 : (requiredOreId == 985 ? 757 : 0);
+            int ownedOres = InventoryHelper.GetItemCount(requiredOreId);
+            if (roughOreId > 0)
             {
-                foreach (var kvp in inv)
+                ownedOres += (InventoryHelper.GetItemCount(roughOreId) / 5);
+            }
+
+            // For non-purchasable ores (Oridecon/Elunium), strictly verify inventory and cap attempts
+            if (GetOreBuyPrice(requiredOreId) <= 0)
+            {
+                if (ownedOres <= 0)
                 {
-                    if (kvp.Value != null && kvp.Value.Id == requiredOreId && kvp.Value.Count > 0)
-                    {
-                        ownedOres += kvp.Value.Count;
-                    }
+                    error = $"No {(requiredOreId == 984 ? "Oridecon" : "Elunium")} (pure or rough) in inventory. Cannot upgrade '{itemName}'.";
+                    CurrentPhase = UpgradePhase.Failed;
+                    StatusMessage = error;
+                    return false;
+                }
+                int needed = targetRefineLevel - currentRefineLevel;
+                if (maxAttempts <= 0 || maxAttempts > ownedOres)
+                {
+                    maxAttempts = Math.Min(needed, ownedOres);
                 }
             }
+
+            // If maxAttempts is set, adjust validation target refine to not require more ores than attempts
+            int validationTargetRefine = (maxAttempts > 0 && currentRefineLevel + maxAttempts < targetRefineLevel)
+                ? currentRefineLevel + maxAttempts
+                : targetRefineLevel;
 
             // Pre-validation: Zeny & Material affordability
             if (!ValidateUpgradeAffordability(
                     gearItem.ItemData,
                     currentRefineLevel,
-                    targetRefineLevel,
+                    validationTargetRefine,
                     ownedOres,
                     out int totalZeny,
                     out int refineFees,
@@ -245,11 +278,27 @@ namespace RebuildBotPlugin.Services
             switch (CurrentPhase)
             {
                 case UpgradePhase.TravelingToBlacksmith:
-                    // 1. Check if arrived on prt_in
-                    if (string.Equals(netManager.CurrentMap, BlacksmithMap, StringComparison.OrdinalIgnoreCase))
+                    // 1. Check if arrived on prt_in and actually in the Blacksmith room
+                    bool inBlacksmithRoom = string.Equals(netManager.CurrentMap, BlacksmithMap, StringComparison.OrdinalIgnoreCase) &&
+                                            (MapNavMesh.Instance == null || MapNavMesh.Instance.IsReachable(player.CellPosition, HollgrehennPos));
+
+                    if (inBlacksmithRoom)
                     {
-                        // Check if we need to buy ores first or go directly to Hollgrehenn
-                        if (missingOreCount > 0)
+                        int roughOreId = (requiredOreId == 984) ? 756 : (requiredOreId == 985 ? 757 : 0);
+                        int roughCount = roughOreId > 0 ? InventoryHelper.GetItemCount(roughOreId) : 0;
+
+                        // Check if we need to purify rough ores at Dietrich first
+                        if (roughCount >= 5)
+                        {
+                            CurrentPhase = UpgradePhase.ExchangingRoughOres;
+                            npcHelper.Reset();
+                            npcHelper.Begin("Dietrich", DietrichPos);
+                            internalStep = 0;
+                            lastStepTime = now;
+                            BotEngine.Instance?.LogEvent($"[Blacksmith] Arrived in prt_in. Visiting Dietrich to purify {roughCount}x rough ores.");
+                        }
+                        // Check if we need to buy basic ores from Vurewell
+                        else if (missingOreCount > 0 && GetOreBuyPrice(requiredOreId) > 0)
                         {
                             CurrentPhase = UpgradePhase.BuyingOres;
                             npcHelper.Reset();
@@ -279,6 +328,64 @@ namespace RebuildBotPlugin.Services
                             destinationMapOverride: BlacksmithMap,
                             targetCellPos: HollgrehennPos);
                     }
+                    return true;
+
+                case UpgradePhase.ExchangingRoughOres:
+                    // Exchange 5 Rough Oridecon/Elunium -> 1 Pure at Dietrich
+                    bool tradeBusy = npcHelper.Process(
+                        netManager,
+                        player,
+                        bot.Navigation,
+                        now,
+                        onOptionMenu: (options) =>
+                        {
+                            if (options != null && options.Length > 0)
+                            {
+                                options[0].OnClick(); // Option 0 is "Trade"
+                                internalStep = 1;
+                                lastStepTime = now;
+                            }
+                            return true;
+                        },
+                        onDialogOpen: null,
+                        onNoUiVisible: () =>
+                        {
+                            if (internalStep == 1 && now - lastStepTime >= 0.5f)
+                            {
+                                int rOreId = (requiredOreId == 984) ? 756 : (requiredOreId == 985 ? 757 : 0);
+                                int rCount = rOreId > 0 ? InventoryHelper.GetItemCount(rOreId) : 0;
+                                int tradeCount = rCount / 5;
+                                if (tradeCount > 0)
+                                {
+                                    int selectedItem = (requiredOreId == 984) ? 0 : 1;
+                                    netManager.SendCompleteNpcTrade(selectedItem, tradeCount, null);
+                                    BotEngine.Instance?.LogEvent($"[Blacksmith] Traded {tradeCount * 5}x rough ores for {tradeCount}x pure ores at Dietrich.");
+                                }
+
+                                NpcInteractionHelper.CleanupNpcUi();
+                                netManager.SendNpcAdvance();
+
+                                if (missingOreCount > 0)
+                                {
+                                    CurrentPhase = UpgradePhase.BuyingOres;
+                                    npcHelper.Reset();
+                                    npcHelper.Begin("Vurewell", VurewellPos);
+                                    internalStep = 0;
+                                    lastStepTime = now;
+                                }
+                                else
+                                {
+                                    CurrentPhase = UpgradePhase.TalkingToHollgrehenn;
+                                    npcHelper.Reset();
+                                    npcHelper.Begin("Hollgrehenn", HollgrehennPos);
+                                    internalStep = 0;
+                                    lastStepTime = now;
+                                }
+                                return true;
+                            }
+                            return false;
+                        }
+                    );
                     return true;
 
                 case UpgradePhase.BuyingOres:
@@ -404,6 +511,15 @@ namespace RebuildBotPlugin.Services
                 return true;
             }
 
+            if (maxAttempts > 0 && attemptsMade >= maxAttempts)
+            {
+                StatusMessage = $"Completed {attemptsMade} refine attempt(s) on '{targetItemName}' (current: +{currentRefineLevel}).";
+                CurrentPhase = UpgradePhase.Completed;
+                netManager.SendNpcAdvance();
+                NpcInteractionHelper.CleanupNpcUi();
+                return true;
+            }
+
             // Find required ore in inventory
             if (!InventoryHelper.TryGetInventoryData(out var inv) || inv == null) return false;
             InventoryItem oreItem = default;
@@ -427,10 +543,21 @@ namespace RebuildBotPlugin.Services
                 return true;
             }
 
+            int refineFee = GetRefineFee(gearItem.ItemData);
+            if (GetCurrentZeny() < refineFee)
+            {
+                StatusMessage = $"Insufficient Zeny for refine fee ({refineFee:N0}z). Stopping at +{currentRefineLevel}.";
+                CurrentPhase = UpgradePhase.Completed;
+                netManager.SendNpcAdvance();
+                NpcInteractionHelper.CleanupNpcUi();
+                return true;
+            }
+
             if (internalStep == 1 && now - lastStepTime >= 0.6f)
             {
                 netManager.SendNpcRefineAttempt(gearItem.BagSlotId, oreItem.BagSlotId, 0);
-                bot.LogEvent($"[Blacksmith] Submitted refine attempt on '{targetItemName}' (+{currentRefineLevel} -> +{currentRefineLevel + 1})...");
+                attemptsMade++;
+                bot.LogEvent($"[Blacksmith] Submitted refine attempt #{attemptsMade}{(maxAttempts > 0 ? $"/{maxAttempts}" : "")} on '{targetItemName}' (+{currentRefineLevel} -> +{currentRefineLevel + 1})...");
                 internalStep = 2;
                 lastStepTime = now;
                 return true;

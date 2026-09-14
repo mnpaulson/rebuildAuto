@@ -24,7 +24,14 @@ namespace RebuildBotPlugin
         UsingPotion,
         TravelingToTargetMap,
         Fleeing,
-        Resting
+        Resting,
+        FollowingPartyLeader,
+        WaitingForParty,
+        DistributorVending,
+        DistributorRestocking,
+        DistributorCollectingLoot,
+        DonatingToDistributor,
+        BuyingFromDistributor
     }
 
     public class BotEngine : MonoBehaviour
@@ -50,20 +57,46 @@ namespace RebuildBotPlugin
         public JobChangeController JobChange { get; } = new JobChangeController();
         public EquipmentController Equipment { get; } = new EquipmentController();
         public MacroController Macro { get; } = new MacroController();
+        public PartyController Party { get; } = new PartyController();
+        public EquipmentTargetController EquipmentTargets { get; } = new EquipmentTargetController();
+        public DistributorController Distributor { get; } = new DistributorController();
 
         public ServerControllable Player => CameraFollower.Instance?.Target != null ? CameraFollower.Instance.Target.GetComponent<ServerControllable>() : null;
 
         private float deathTimestamp = 0f;
         private float lastRespawnTime = 0f;
-        private float lastLootTime = 0f;
         private bool justRespawned = false;
         private bool wasBotEnabled = false;
+        private float lastConfigFileCheckTime = 0f;
+        private DateTime lastConfigWriteTime = DateTime.MinValue;
 
         private static readonly System.Text.Json.JsonSerializerOptions CachedJsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
         private static readonly System.Diagnostics.Stopwatch FrameStopwatch = new System.Diagnostics.Stopwatch();
         private int lastGc0Count = 0;
         private Vector2Int lastHeatmapPlayerPos = new Vector2Int(-9999, -9999);
         private float lastHeatmapUpdateTime = 0f;
+
+        private void CheckHotReloadConfig(float now)
+        {
+            if (now - lastConfigFileCheckTime < 1.0f) return;
+            lastConfigFileCheckTime = now;
+
+            try
+            {
+                string cfgPath = BotConfigManager.ConfigPath;
+                if (!string.IsNullOrEmpty(cfgPath) && System.IO.File.Exists(cfgPath))
+                {
+                    var writeTime = System.IO.File.GetLastWriteTimeUtc(cfgPath);
+                    if (lastConfigWriteTime != DateTime.MinValue && writeTime > lastConfigWriteTime)
+                    {
+                        BotConfigManager.LoadConfig();
+                        Services.BotLog.Info("[Config] Detected updated config on disk. Hot-reloaded profile settings.");
+                    }
+                    lastConfigWriteTime = writeTime;
+                }
+            }
+            catch { }
+        }
 
         public BotEngine(IntPtr ptr) : base(ptr) { }
 
@@ -131,6 +164,13 @@ namespace RebuildBotPlugin
                     HasActiveMacro = false,
                     CurrentMacro = "",
                     ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
+                    PartyEnabled = BotConfigManager.Current.PartyEnabled,
+                    PartyName = BotConfigManager.Current.PartyName ?? "",
+                    IsPartyLeader = BotConfigManager.Current.IsPartyLeader,
+                    IsPartySupport = BotConfigManager.Current.IsPartySupport,
+                    IsPartyLooter = BotConfigManager.Current.IsPartyLooter,
+                    TargetEntityId = -1,
+                    TargetName = "None",
                     Timestamp = DateTime.UtcNow
                 };
 
@@ -143,7 +183,11 @@ namespace RebuildBotPlugin
                     System.IO.Directory.CreateDirectory(dir);
                 }
 
-                System.IO.File.WriteAllText(path, json);
+                using (var fs = new System.IO.FileStream(path, System.IO.FileMode.Create, System.IO.FileAccess.Write, System.IO.FileShare.ReadWrite))
+                using (var sw = new System.IO.StreamWriter(fs))
+                {
+                    sw.Write(json);
+                }
             }
             catch { }
         }
@@ -213,7 +257,8 @@ namespace RebuildBotPlugin
 
         private void EmitBotStatus(float now, ServerControllable player, NetworkManager netManager, bool force = false)
         {
-            if (!force && now - lastStatusEmitTime < 1.0f) return;
+            float emitInterval = BotConfigManager.Current.PartyEnabled ? 0.25f : 1.0f;
+            if (!force && now - lastStatusEmitTime < emitInterval) return;
             lastStatusEmitTime = now;
 
             try
@@ -289,6 +334,28 @@ namespace RebuildBotPlugin
                     HasActiveMacro = Macro.HasActiveMacro,
                     CurrentMacro = Macro.CurrentAction != null ? Macro.CurrentAction.Description : "",
                     ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
+                    PartyEnabled = BotConfigManager.Current.PartyEnabled,
+                    PartyName = BotConfigManager.Current.PartyName ?? "",
+                    IsPartyLeader = BotConfigManager.Current.IsPartyLeader,
+                    IsPartySupport = BotConfigManager.Current.IsPartySupport,
+                    IsPartyLooter = BotConfigManager.Current.IsPartyLooter,
+                    IsInGameParty = state != null && state.IsInParty,
+                    InGamePartyName = (state != null && state.IsInParty && !string.IsNullOrEmpty(state.PartyName)) ? state.PartyName : "",
+                    IsInGamePartyLeader = state != null && state.IsInParty && state.PartyLeader == state.PartyMemberId,
+                    InGamePartyLeaderName = (state != null && state.IsInParty && state.PartyMembers != null && state.PartyMembers.TryGetValue(state.PartyLeader, out var leadMem)) ? (leadMem.PlayerName ?? "") : "",
+                    IsDistributor = BotConfigManager.Current.IsDistributor && DistributorController.IsMerchantClass(),
+                    DistributorMap = BotConfigManager.Current.DistributorMap ?? "",
+                    DistributorX = BotConfigManager.Current.DistributorX,
+                    DistributorY = BotConfigManager.Current.DistributorY,
+                    IsReadyForDonations = Distributor != null && Distributor.IsReadyForDonations,
+                    IsVendingOpen = Distributor != null && Distributor.IsVendingOpen,
+                    VendingShopTitle = BotConfigManager.Current.VendingShopTitle ?? "Fleet Depot",
+                    TargetEntityId = Combat.CurrentLockedTargetId,
+                    TargetName = Combat.CurrentTargetName,
+                    IsAlive = player != null ? (player.IsCharacterAlive && player.Hp > 0) : (CurrentState != BotState.PlayerDead && !string.Equals(botStateStr, "PlayerDead", StringComparison.OrdinalIgnoreCase)),
+                    ActiveStatusEffects = GetActiveStatusEffectNames(player),
+                    HasAspdBuff = Survival != null && Survival.HasAspdBuffActive(player),
+                    AspdBuffRemainingSeconds = Survival != null ? (int)Survival.GetRemainingAspdBuffSeconds(player) : 0,
                     Timestamp = DateTime.UtcNow
                 };
 
@@ -301,13 +368,52 @@ namespace RebuildBotPlugin
                     System.IO.Directory.CreateDirectory(dir);
                 }
 
-                System.IO.File.WriteAllText(path, json);
+                using (var stream = new System.IO.FileStream(path, System.IO.FileMode.Create, System.IO.FileAccess.Write, System.IO.FileShare.ReadWrite))
+                using (var writer = new System.IO.StreamWriter(stream, System.Text.Encoding.UTF8))
+                {
+                    writer.Write(json);
+                }
             }
             catch { }
         }
 
+        private static List<string> GetActiveStatusEffectNames(ServerControllable player)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (Assets.Scripts.UI.Hud.StatusEffectPanel.Instance != null &&
+                    Assets.Scripts.UI.Hud.StatusEffectPanel.Instance.StatusEffectLookup != null)
+                {
+                    foreach (var kvp in Assets.Scripts.UI.Hud.StatusEffectPanel.Instance.StatusEffectLookup)
+                    {
+                        if (kvp.Value != null && !kvp.Value.IsExpired)
+                        {
+                            set.Add(kvp.Key.ToString());
+                        }
+                    }
+                }
+
+                if (player != null && player.StatusEffectState != null)
+                {
+                    var effects = player.StatusEffectState.GetStatusEffects();
+                    if (effects != null)
+                    {
+                        foreach (var kvp in effects)
+                        {
+                            set.Add(kvp.Key.ToString());
+                        }
+                    }
+                }
+            }
+            catch { }
+            return new List<string>(set);
+        }
+
         private void OnTeleportReset()
         {
+            Services.NpcInteractionHelper.CleanupNpcUi();
+            Navigation.InvalidateTravelPlan();
             Combat.Clear();
             Loot.Clear();
             Navigation.ResetWander();
@@ -319,6 +425,7 @@ namespace RebuildBotPlugin
         {
             float now = Time.time;
             LowSpec.Update(now);
+            CheckHotReloadConfig(now);
 
             if (!BotConfigManager.Current.Enabled)
             {
@@ -360,7 +467,7 @@ namespace RebuildBotPlugin
             var netManager = NetworkManager.Instance;
             ServerControllable player = null;
 
-            bool isInGame = cam != null && cam.Target != null && netManager != null &&
+            bool isInGame = cam != null && !cam.IsInErrorState && cam.Target != null && netManager != null &&
                             netManager.EntityList != null && !string.IsNullOrEmpty(netManager.CurrentMap) &&
                             netManager.EntityList.TryGetValue(netManager.PlayerId, out player) && player != null;
 
@@ -458,21 +565,86 @@ namespace RebuildBotPlugin
             // Cleanup temporary loot blacklists
             Loot.CleanupLootAttempts(now);
 
+            // In-Game Party Synchronization (Create, Invite, Accept, Leave)
+            Party.SynchronizeInGameParty(netManager, player, now);
+
             // PRIORITY 1: SURVIVAL & AVOIDANCE (Potions, Low HP Fly Wing, Boss Escape, Sit-Rest)
+            if (CurrentState == BotState.Fleeing && PartyController.ShouldSuppressFlee())
+            {
+                CurrentState = BotState.Idle;
+            }
+
             if (Survival.ProcessSurvival(netManager, player, now, Targeting, Navigation, OnTeleportReset, ref CurrentState))
             {
                 return;
             }
 
-            // PRIORITY 1.5: BUFFS & SUPPORT RECOVERY (Self-Buffs, Party Heals, Blessing/Agi)
-            if (!TownRoutine.IsActive && Skills.ProcessBuffsAndRecovery(netManager, player, now))
+            // PRIORITY 1.5: BUFFS & SUPPORT RECOVERY (Self-Buffs, Party Heals, Blessing/Agi, Ruwach)
+            if (!TownRoutine.IsActive && !Services.NpcInteractionHelper.IsInNpcInteraction() && Skills.ProcessBuffsAndRecovery(netManager, player, now, Navigation))
             {
+                return;
+            }
+
+            // PRIORITY 1.7: MERCHANT DISTRIBUTOR (Central Fleet Depot & Vending)
+            if (BotConfigManager.Current.IsDistributor && DistributorController.IsMerchantClass())
+            {
+                Distributor.ProcessDistributor(netManager, player, Navigation, Loot, now, ref CurrentState);
+                return;
+            }
+
+            // PRIORITY 1.8: TOWN ROUTINE & ESSENTIAL RESTOCK TRIGGER
+            // When town routine is active, or essential supplies (e.g. arrows, potions, wings) are depleted,
+            // or an Archer has 0 arrows, or overweight, town routine takes top priority over combat!
+            bool isBowUserOutOfAmmo = ArrowHelper.IsBowUserOutOfAmmo(player);
+            string restockReason = null;
+            bool hasDepletedEssential = BotConfigManager.Current.AutoRestockOnLowSupplies &&
+                                        TownRoutineController.HasDepletedEssentialSupplies(out restockReason);
+            bool isOverweight = TownRoutineController.IsOverweight();
+
+            if (TownRoutine.IsActive || isBowUserOutOfAmmo || hasDepletedEssential || isOverweight)
+            {
+                if (!TownRoutine.IsActive)
+                {
+                    string startReason = isBowUserOutOfAmmo ? "Out of arrows" :
+                                         (hasDepletedEssential ? restockReason : "Overweight threshold reached");
+                    Combat.CurrentLockedTargetId = -1;
+                    Combat.OnTargetDefeated();
+                    TownRoutine.StartRoutine(startReason);
+                }
+
+                if (TownRoutine.IsActive)
+                {
+                    if (TownRoutine.ProcessTownRoutine(netManager, player, Navigation, now))
+                    {
+                        return;
+                    }
+                }
+            }
+
+            // PRIORITY 1.9: AUTOMATIC EQUIPMENT TARGETS (Purchase & Refine upgrades)
+            if (!TownRoutine.IsActive)
+            {
+                if (EquipmentTargets.IsActive || EquipmentTargets.CheckTripInterrupt(netManager, player, now))
+                {
+                    Combat.CurrentLockedTargetId = -1;
+                    Combat.OnTargetDefeated();
+                    if (EquipmentTargets.Process(this, now))
+                    {
+                        return;
+                    }
+                }
+            }
+
+            // If a bow user has 0 arrows, strictly prevent falling through to any combat priorities!
+            if (isBowUserOutOfAmmo)
+            {
+                CurrentState = BotState.Idle;
                 return;
             }
 
             // PRIORITY 2: SELF-DEFENSE (Any monster currently attacking player)
             ServerControllable attacker = null;
-            if (BotConfigManager.Current.AutoAttack)
+            if (!TownRoutine.IsActive && !isBowUserOutOfAmmo && (BotConfigManager.Current.AutoAttack || BotConfigManager.Current.PartyEnabled) && !BotConfigManager.Current.IsPartySupport)
             {
                 attacker = Targeting.GetAttackingMonster(player.CellPosition);
             }
@@ -484,6 +656,12 @@ namespace RebuildBotPlugin
                 return;
             }
 
+            // PRIORITY 2.3: PARTY COORDINATION (Follow Leader & Assist Target)
+            if (Party.ProcessParty(netManager, player, now, Navigation, Combat, Targeting, ref CurrentState))
+            {
+                return;
+            }
+
             // PRIORITY 2.5: DISCRETE MACRO ACTION QUEUE (Buy, Equip, Upgrade, Socket, Travel, etc.)
             if (Macro.ProcessMacro(this, now))
             {
@@ -492,7 +670,7 @@ namespace RebuildBotPlugin
 
             // PRIORITY 3: ONGOING COMBAT (Stick with engaged target until defeated)
             ServerControllable lockedTarget = null;
-            if (BotConfigManager.Current.AutoAttack && Combat.CurrentLockedTargetId != -1)
+            if (!TownRoutine.IsActive && !isBowUserOutOfAmmo && BotConfigManager.Current.AutoAttack && !BotConfigManager.Current.IsPartySupport && Combat.CurrentLockedTargetId != -1)
             {
                 lockedTarget = Combat.GetLockedTarget(player.CellPosition);
             }
@@ -526,6 +704,12 @@ namespace RebuildBotPlugin
 
             // PRIORITY 3.4: ACTIVE NPC DIALOG WATCHER (Automatically pace & advance any open dialogs when not in Kafra travel)
             if (!Navigation.IsKafraTravelActive && NpcInteractionHelper.ProcessActiveDialog(netManager, now))
+            {
+                return;
+            }
+
+            // Watchdog: detect and recover from ghost/desynced NPC interactions where character is locked on server without client UI
+            if (!Navigation.IsKafraTravelActive && NpcInteractionHelper.CheckAndRecoverGhostInteraction(netManager, now))
             {
                 return;
             }
@@ -579,44 +763,19 @@ namespace RebuildBotPlugin
             }
 
             // PRIORITY 5: AUTO-LOOT (Pick up all items in radius before engaging new passive monsters)
-            if (BotConfigManager.Current.AutoLoot)
+            if (BotConfigManager.Current.AutoLoot && !Party.ShouldSkipLootingForPartyLooter())
             {
-                if (Loot.PendingLootItemId != -1)
+                if (Loot.ProcessLoot(netManager, player, now, ref CurrentState))
                 {
-                    if (netManager.GroundItemList == null || !netManager.GroundItemList.ContainsKey(Loot.PendingLootItemId))
-                    {
-                        Loot.LootCount++;
-                        LogEvent($"Collected loot item! Total Loot: {Loot.LootCount}");
-                        Loot.PendingLootItemId = -1;
-                    }
-                }
-
-                var nearestItem = Loot.FindNearestGroundItem(player.CellPosition);
-                if (nearestItem != null)
-                {
-                    if (now - lastLootTime >= BotConfigManager.Current.LootCooldownSeconds)
-                    {
-                        Loot.PendingLootItemId = nearestItem.EntityId;
-                        Loot.TrackLootAttempt(nearestItem.EntityId, now);
-
-                        // Directly dispatch SendPickUpItem - server handles pathing and queued pickup
-                        netManager.SendPickUpItem(nearestItem.EntityId);
-                        lastLootTime = now;
-                        CurrentState = BotState.LootingItem;
-                        float distToItem = Vector2.Distance(player.CellPosition, new Vector2(nearestItem.transform.position.x, nearestItem.transform.position.z));
-                        LogEvent($"[Loot] Picking up {nearestItem.ItemName} (ID: {nearestItem.EntityId}, dist: {distToItem:F1} tiles).");
-                    }
                     return;
-                }
-                else
-                {
-                    Loot.PendingLootItemId = -1;
                 }
             }
 
             // PRIORITY 6: INITIATE NEW COMBAT (Only when all items in radius are looted and not in recovery/town routine)
             ServerControllable newTarget = null;
-            if (BotConfigManager.Current.AutoAttack && !Survival.IsRecovering && !TownRoutine.IsActive)
+            bool partyFollower = BotConfigManager.Current.PartyEnabled && !BotConfigManager.Current.IsPartyLeader;
+            if (!TownRoutine.IsActive && !isBowUserOutOfAmmo && !hasDepletedEssential && !isOverweight &&
+                BotConfigManager.Current.AutoAttack && !BotConfigManager.Current.IsPartySupport && !partyFollower && !Survival.IsRecovering)
             {
                 newTarget = Targeting.FindBestTargetMonster(player.CellPosition);
             }
@@ -629,9 +788,9 @@ namespace RebuildBotPlugin
             }
 
             // PRIORITY 7: FLUID MACRO-EXPLORATION AUTO-WANDER
-            if (BotConfigManager.Current.AutoWander && !Survival.IsRecovering && !TownRoutine.IsActive)
+            if (BotConfigManager.Current.AutoWander && !partyFollower && !Survival.IsRecovering && !TownRoutine.IsActive)
             {
-                Survival.TryUseAspdPotion(netManager, now);
+                Survival.TryUseAspdPotion(netManager, player, now);
                 Navigation.ProcessWander(netManager, player, now, ref CurrentState);
                 return;
             }

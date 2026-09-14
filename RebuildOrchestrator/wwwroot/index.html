@@ -98,6 +98,20 @@
       </div>
     </section>
 
+    <!-- Fleet Management Header & Add Bot Trigger -->
+    <section class="fleet-section-header">
+      <div class="fleet-header-left">
+        <h2 class="fleet-heading">Fleet Instances</h2>
+        <span class="badge-pill badge-slate" id="fleet-count-pill">0 Bots Configured</span>
+      </div>
+      <div class="fleet-header-right">
+        <button type="button" class="btn btn-emerald" onclick="openAddBotModal()" style="display: inline-flex; align-items: center; gap: 6px; font-weight: 600; padding: 7px 16px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          Add Bot
+        </button>
+      </div>
+    </section>
+
     <!-- Live Fleet Cards Grid -->
     <main class="fleet-grid" id="fleet-grid">
       <!-- Dynamically Populated via JS -->
@@ -111,6 +125,57 @@
       </div>
       <div class="chart-canvas-container">
         <canvas id="telemetry-chart"></canvas>
+      </div>
+    </section>
+
+    <!-- Fleet Master Item Rules Section -->
+    <section class="master-item-rules-section" id="master-item-rules-section">
+      <div class="master-rules-header">
+        <div class="master-rules-title-group">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>
+          <h2 class="master-rules-title">Fleet Master Item Rules</h2>
+          <span class="badge-pill badge-slate" id="master-rules-count-pill">0 Rules Configured</span>
+        </div>
+        <div class="master-rules-controls">
+          <input type="text" class="master-rules-search" id="master-rules-search" placeholder="Filter items..." oninput="onMasterRulesSearch(this.value)">
+          <div class="item-rules-filter-pills">
+            <button type="button" class="filter-pill active" id="master-filter-all" onclick="setMasterRulesFilter('all')">All</button>
+            <button type="button" class="filter-pill" id="master-filter-sell" onclick="setMasterRulesFilter('Sell')">Sell</button>
+            <button type="button" class="filter-pill" id="master-filter-store" onclick="setMasterRulesFilter('Store')">Store</button>
+            <button type="button" class="filter-pill" id="master-filter-keep" onclick="setMasterRulesFilter('Keep')">Keep</button>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="loadMasterItemRules()">Refresh</button>
+        </div>
+      </div>
+
+      <div class="master-rules-body">
+        <div class="item-rules-table-wrapper" style="max-height: 280px; overflow-y: auto;">
+          <table class="config-table master-rules-table">
+            <thead>
+              <tr>
+                <th>Item Name</th>
+                <th style="width: 220px; text-align: center;">Disposition</th>
+                <th style="width: 120px; text-align: center;">Max Count</th>
+                <th style="width: 60px; text-align: center;">Delete</th>
+              </tr>
+            </thead>
+            <tbody id="master-rules-tbody">
+              <!-- Populated dynamically via JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Add Rule Bar -->
+        <div class="master-rules-add-bar">
+          <input type="text" class="config-table-input" id="new-master-rule-name" placeholder="Item name (e.g. Fluff, Jellopy, Red Potion)..." style="flex: 2;">
+          <select class="tremor-select" id="new-master-rule-disposition" style="flex: 1; min-width: 140px; padding: 6px 10px; font-size: 0.8rem;">
+            <option value="Sell">Sell to Vendor</option>
+            <option value="Store">Deposit to Storage</option>
+            <option value="Keep">Keep in Inventory</option>
+          </select>
+          <input type="number" class="config-table-input" id="new-master-rule-max" placeholder="Max count (opt, 0=unlimited)" min="0" style="width: 180px;">
+          <button type="button" class="btn btn-emerald btn-sm" onclick="addMasterItemRule()" style="white-space: nowrap; padding: 6px 16px;">+ Add Rule</button>
+        </div>
       </div>
     </section>
 
@@ -270,8 +335,265 @@
     </div>
   </div>
 
+  <!-- Add Bot Modal -->
+  <div class="modal-backdrop" id="add-bot-modal">
+    <div class="modal-content add-bot-modal-content">
+      <div class="modal-header">
+        <div>
+          <h2>Add New Bot</h2>
+          <span style="font-size: 0.775rem; color: var(--text-muted);">Configure credentials, starting stats, and initial build progression plans</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="closeAddBotModal()">&times;</button>
+      </div>
+
+      <div class="add-bot-form">
+        <!-- Error Banner -->
+        <div id="addbot-error-banner" class="error-banner" style="display: none;"></div>
+
+        <!-- Section 1: Account & Credentials -->
+        <div class="form-section">
+          <span class="form-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            1. Account Credentials
+          </span>
+          <div class="form-row-2">
+            <div class="form-group">
+              <label>Select Account</label>
+              <select class="form-input" id="addbot-account-select" onchange="onAccountSelectionChanged()">
+                <!-- Populated dynamically -->
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Account ID</label>
+              <input type="text" class="form-input" id="addbot-account-id" placeholder="Account ID">
+            </div>
+          </div>
+          <div class="form-row-2">
+            <div class="form-group">
+              <label>Password</label>
+              <input type="password" class="form-input" id="addbot-password" placeholder="Password">
+            </div>
+            <div class="form-group" style="justify-content: center;">
+              <span id="addbot-slot-hint" style="font-size: 0.775rem; color: var(--accent-blue); padding-top: 14px;"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2: Character Identity & Target Job -->
+        <div class="form-section">
+          <span class="form-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            2. Character Identity & Target Class
+          </span>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label>Character Name</label>
+              <input type="text" class="form-input" id="addbot-char-name" placeholder="e.g. RobinHood" maxlength="30">
+            </div>
+            <div class="form-group">
+              <label>Gender</label>
+              <div class="gender-toggle-group">
+                <label class="gender-option">
+                  <input type="radio" name="addbot-gender" id="addbot-gender-male" value="Male" checked>
+                  <span>Male</span>
+                </label>
+                <label class="gender-option">
+                  <input type="radio" name="addbot-gender" id="addbot-gender-female" value="Female">
+                  <span>Female</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Target Job</label>
+              <select class="form-input" id="addbot-target-job" onchange="onTargetJobChanged()">
+                <option value="Archer">Archer (Hunter)</option>
+                <option value="Mage">Mage (Wizard)</option>
+                <option value="Swordsman">Swordsman (Knight)</option>
+                <option value="Acolyte">Acolyte (Priest)</option>
+                <option value="Thief">Thief (Assassin)</option>
+                <option value="Merchant">Merchant (Blacksmith)</option>
+                <option value="Novice">Novice</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 3: Starting Stats (33 Points Pool) -->
+        <div class="form-section">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span class="form-section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
+              3. Starting Stat Distribution (1–9 each)
+            </span>
+            <span class="badge-pill badge-emerald" id="addbot-budget-badge">33 / 33 Points Allocated</span>
+          </div>
+
+          <!-- Quick Presets -->
+          <div class="archetype-presets-bar">
+            <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Archetype Presets:</span>
+            <button type="button" class="preset-chip" onclick="applyJobArchetypePreset('Archer')">Archer (Agi/Dex)</button>
+            <button type="button" class="preset-chip" onclick="applyJobArchetypePreset('Mage')">Mage (Int/Dex)</button>
+            <button type="button" class="preset-chip" onclick="applyJobArchetypePreset('Swordsman')">Swordsman (Str/Agi)</button>
+            <button type="button" class="preset-chip" onclick="applyJobArchetypePreset('Acolyte')">Acolyte (Int/Vit)</button>
+            <button type="button" class="preset-chip" onclick="applyJobArchetypePreset('Thief')">Thief (Agi/Str)</button>
+            <button type="button" class="preset-chip" onclick="applyJobArchetypePreset('Merchant')">Merchant (Str/Vit)</button>
+            <button type="button" class="preset-chip" onclick="applyJobArchetypePreset('Novice')">Balanced</button>
+          </div>
+
+          <!-- 6 Stat Steppers -->
+          <div class="stat-steppers-grid">
+            <div class="stat-stepper-card">
+              <span class="stat-stepper-label">STR</span>
+              <div class="stat-stepper-controls">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('str', -1)">-</button>
+                <input type="number" class="stat-stepper-val" id="addbot-stat-str" min="1" max="9" value="5" onchange="onStartingStatInput('str', this.value)">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('str', 1)">+</button>
+              </div>
+            </div>
+            <div class="stat-stepper-card">
+              <span class="stat-stepper-label">AGI</span>
+              <div class="stat-stepper-controls">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('agi', -1)">-</button>
+                <input type="number" class="stat-stepper-val" id="addbot-stat-agi" min="1" max="9" value="5" onchange="onStartingStatInput('agi', this.value)">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('agi', 1)">+</button>
+              </div>
+            </div>
+            <div class="stat-stepper-card">
+              <span class="stat-stepper-label">VIT</span>
+              <div class="stat-stepper-controls">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('vit', -1)">-</button>
+                <input type="number" class="stat-stepper-val" id="addbot-stat-vit" min="1" max="9" value="5" onchange="onStartingStatInput('vit', this.value)">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('vit', 1)">+</button>
+              </div>
+            </div>
+            <div class="stat-stepper-card">
+              <span class="stat-stepper-label">INT</span>
+              <div class="stat-stepper-controls">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('int', -1)">-</button>
+                <input type="number" class="stat-stepper-val" id="addbot-stat-int" min="1" max="9" value="5" onchange="onStartingStatInput('int', this.value)">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('int', 1)">+</button>
+              </div>
+            </div>
+            <div class="stat-stepper-card">
+              <span class="stat-stepper-label">DEX</span>
+              <div class="stat-stepper-controls">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('dex', -1)">-</button>
+                <input type="number" class="stat-stepper-val" id="addbot-stat-dex" min="1" max="9" value="5" onchange="onStartingStatInput('dex', this.value)">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('dex', 1)">+</button>
+              </div>
+            </div>
+            <div class="stat-stepper-card">
+              <span class="stat-stepper-label">LUK</span>
+              <div class="stat-stepper-controls">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('luk', -1)">-</button>
+                <input type="number" class="stat-stepper-val" id="addbot-stat-luk" min="1" max="9" value="8" onchange="onStartingStatInput('luk', this.value)">
+                <button type="button" class="btn-stepper" onclick="updateStartingStat('luk', 1)">+</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 4: Progression & Build Targets -->
+        <div class="form-section">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span class="form-section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              4. Progression Build Targets
+            </span>
+            <div class="addbot-tabs-bar">
+              <button type="button" class="addbot-tab-btn active" id="addbot-tab-btn-stats" onclick="switchAddBotTab('stats')">Stat Milestones</button>
+              <button type="button" class="addbot-tab-btn" id="addbot-tab-btn-skills" onclick="switchAddBotTab('skills')">Skill Progression</button>
+            </div>
+          </div>
+
+          <!-- Stat Milestones Panel -->
+          <div id="addbot-tab-panel-stats">
+            <div class="plan-table-wrapper" style="max-height: 220px; overflow-y: auto;">
+              <table class="config-table plan-table">
+                <thead>
+                  <tr>
+                    <th style="width: 50px;">Step</th>
+                    <th style="width: 130px;">Stat</th>
+                    <th>Target Value</th>
+                    <th style="width: 80px; text-align: center;">Order</th>
+                    <th style="width: 45px; text-align: center;">Del</th>
+                  </tr>
+                </thead>
+                <tbody id="addbot-stat-table-body">
+                  <!-- Populated dynamically -->
+                </tbody>
+                <tfoot>
+                  <tr class="add-row">
+                    <td colspan="2">
+                      <select class="tremor-select" id="addbot-new-stat-picker" style="padding: 5px 8px; width: 100%;">
+                        <option value="Dex">DEX (Dexterity)</option>
+                        <option value="Str">STR (Strength)</option>
+                        <option value="Agi">AGI (Agility)</option>
+                        <option value="Vit">VIT (Vitality)</option>
+                        <option value="Int">INT (Intelligence)</option>
+                        <option value="Luk">LUK (Luck)</option>
+                      </select>
+                    </td>
+                    <td colspan="2">
+                      <input type="number" class="config-table-input" id="addbot-new-stat-target" value="20" min="1" max="99" placeholder="Target...">
+                    </td>
+                    <td style="text-align: center;">
+                      <button type="button" class="btn btn-secondary btn-sm" onclick="addNewAddBotStatStep()">+ Add</button>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- Skill Progression Panel -->
+          <div id="addbot-tab-panel-skills" style="display: none;">
+            <div class="plan-table-wrapper" style="max-height: 220px; overflow-y: auto;">
+              <table class="config-table plan-table">
+                <thead>
+                  <tr>
+                    <th style="width: 50px;">Step</th>
+                    <th>Skill Name</th>
+                    <th style="width: 110px;">Target Lv</th>
+                    <th style="width: 80px; text-align: center;">Order</th>
+                    <th style="width: 45px; text-align: center;">Del</th>
+                  </tr>
+                </thead>
+                <tbody id="addbot-skill-table-body">
+                  <!-- Populated dynamically -->
+                </tbody>
+                <tfoot>
+                  <tr class="add-row">
+                    <td colspan="2">
+                      <input type="text" class="config-table-input" id="addbot-new-skill-name" placeholder="Skill name..." list="addbot-skills-datalist" style="width: 100%;">
+                    </td>
+                    <td colspan="2">
+                      <input type="number" class="config-table-input" id="addbot-new-skill-level" value="10" min="1" max="10" placeholder="Lv 1-10">
+                    </td>
+                    <td style="text-align: center;">
+                      <button type="button" class="btn btn-secondary btn-sm" onclick="addNewAddBotSkillStep()">+ Add</button>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeAddBotModal()">Cancel</button>
+        <button type="button" class="btn btn-emerald" id="btn-submit-add-bot" onclick="submitAddBot()">Create Bot</button>
+      </div>
+    </div>
+  </div>
+
+  <datalist id="addbot-skills-datalist"></datalist>
+
   <script src="js/config_schema.js"></script>
   <script src="js/config_editor.js"></script>
+  <script src="js/add_bot_modal.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
+

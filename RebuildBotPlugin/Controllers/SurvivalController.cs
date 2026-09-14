@@ -44,9 +44,14 @@ namespace RebuildBotPlugin.Controllers
             isRecovering = false;
         }
 
-        public bool IsPlayerSitting(ServerControllable player)
+        public static bool IsSitting(ServerControllable player)
         {
             return player != null && player.SpriteAnimator != null && player.SpriteAnimator.State == Assets.Scripts.SpriteState.Sit;
+        }
+
+        public bool IsPlayerSitting(ServerControllable player)
+        {
+            return IsSitting(player);
         }
 
         public int GetAvailableFlyWingId()
@@ -107,8 +112,25 @@ namespace RebuildBotPlugin.Controllers
         public const int AwakeningPotionId = 656;
         public const int BerserkPotionId = 657;
 
-        public bool HasAspdBuffActive()
+        public bool HasAspdBuffActive(ServerControllable player = null)
         {
+            if (player == null && NetworkManager.Instance != null && NetworkManager.Instance.EntityList != null)
+            {
+                NetworkManager.Instance.EntityList.TryGetValue(NetworkManager.Instance.PlayerId, out player);
+            }
+
+            // 1. Direct authoritative status effect state on player entity
+            if (player != null && player.StatusEffectState != null)
+            {
+                var effects = player.StatusEffectState.GetStatusEffects();
+                if (effects != null && effects.TryGetValue(CharacterStatusEffect.IncreasedAttackSpeed, out float expiry))
+                {
+                    if (expiry - Time.timeSinceLevelLoad > 0f)
+                        return true;
+                }
+            }
+
+            // 2. UI StatusEffectPanel fallback
             if (StatusEffectPanel.Instance != null && StatusEffectPanel.Instance.StatusEffectLookup != null)
             {
                 if (StatusEffectPanel.Instance.StatusEffectLookup.TryGetValue(CharacterStatusEffect.IncreasedAttackSpeed, out var entry))
@@ -118,6 +140,35 @@ namespace RebuildBotPlugin.Controllers
                 }
             }
             return false;
+        }
+
+        public float GetRemainingAspdBuffSeconds(ServerControllable player = null)
+        {
+            if (player == null && NetworkManager.Instance != null && NetworkManager.Instance.EntityList != null)
+            {
+                NetworkManager.Instance.EntityList.TryGetValue(NetworkManager.Instance.PlayerId, out player);
+            }
+
+            if (player != null && player.StatusEffectState != null)
+            {
+                var effects = player.StatusEffectState.GetStatusEffects();
+                if (effects != null && effects.TryGetValue(CharacterStatusEffect.IncreasedAttackSpeed, out float expiry))
+                {
+                    float remaining = expiry - Time.timeSinceLevelLoad;
+                    if (remaining > 0f) return remaining;
+                }
+            }
+
+            if (StatusEffectPanel.Instance != null && StatusEffectPanel.Instance.StatusEffectLookup != null)
+            {
+                if (StatusEffectPanel.Instance.StatusEffectLookup.TryGetValue(CharacterStatusEffect.IncreasedAttackSpeed, out var entry))
+                {
+                    if (entry != null && !entry.IsExpired)
+                        return Mathf.Max(0f, entry.Expiration - Time.timeSinceLevelLoad);
+                }
+            }
+
+            return 0f;
         }
 
         public static bool IsInTargetMap(NetworkManager netManager)
@@ -239,11 +290,16 @@ namespace RebuildBotPlugin.Controllers
 
         public bool TryUseAspdPotion(NetworkManager netManager, float now)
         {
+            return TryUseAspdPotion(netManager, null, now);
+        }
+
+        public bool TryUseAspdPotion(NetworkManager netManager, ServerControllable player, float now)
+        {
             if (!BotConfigManager.Current.AutoAspdPotion) return false;
             if (BotEngine.Instance != null && BotEngine.Instance.TownRoutine != null && BotEngine.Instance.TownRoutine.IsActive) return false;
-            if (!IsInTargetMap(netManager)) return false;
+            if (netManager != null && TownRoutineController.IsTownOrBaseMap(netManager.CurrentMap)) return false;
             if (now - lastAspdPotionTime < 1.0f) return false;
-            if (HasAspdBuffActive()) return false;
+            if (HasAspdBuffActive(player)) return false;
             if (now - lastAspdCheckTime < 2.0f) return false;
             lastAspdCheckTime = now;
 
@@ -364,8 +420,8 @@ namespace RebuildBotPlugin.Controllers
                 }
             }
 
-            // 1.5. Auto-ASPD Potion Check (Refreshes immediately upon expiration on target map)
-            TryUseAspdPotion(netManager, now);
+            // 1.5. Auto-ASPD Potion Check (Refreshes immediately upon expiration on field maps)
+            TryUseAspdPotion(netManager, player, now);
 
             // 2. Emergency Escape Check (Low HP Escape)
             if (BotConfigManager.Current.EmergencyFlyWingOnLowHp && player.MaxHp > 0)
@@ -375,12 +431,16 @@ namespace RebuildBotPlugin.Controllers
                     if (isOutOfPotions) isRecovering = true;
 
                     // If critically low on HP and completely out of HP items on a field map:
-                    // If AutoReturnOnOutOfHpItems is enabled, immediately warp to town rather than spamming random Fly Wings!
-                    if (isOutOfPotions && BotConfigManager.Current.AutoReturnOnOutOfHpItems && !TownRoutineController.IsTownMap(netManager.CurrentMap))
+                    // If HP potions are configured as an essential supply, immediately warp to town rather than spamming random Fly Wings!
+                    bool hasEssentialHpSupplies = BotConfigManager.Current.IsSupplyEssential("Red_Potion") ||
+                                                 BotConfigManager.Current.IsSupplyEssential("Orange_Potion") ||
+                                                 BotConfigManager.Current.IsSupplyEssential("Yellow_Potion") ||
+                                                 BotConfigManager.Current.IsSupplyEssential("White_Potion");
+                    if (isOutOfPotions && hasEssentialHpSupplies && !TownRoutineController.IsTownOrBaseMap(netManager.CurrentMap))
                     {
                         if (BotEngine.Instance != null && BotEngine.Instance.TownRoutine != null && !BotEngine.Instance.TownRoutine.IsActive)
                         {
-                            BotEngine.Instance.TownRoutine.StartRoutine("Emergency escape while out of HP items");
+                            BotEngine.Instance.TownRoutine.StartRoutine("Emergency escape while out of essential HP items");
                             if (isSitting) netManager.ChangePlayerSitStand(false);
                             if (BotEngine.Instance.TownRoutine.ProcessTownRoutine(netManager, player, navigation, now))
                             {
@@ -399,27 +459,82 @@ namespace RebuildBotPlugin.Controllers
 
                     if (inDanger)
                     {
-                        int wingId = GetAvailableFlyWingId();
-                        if (wingId > 0)
+                        if (PartyController.ShouldSuppressFlee())
                         {
-                            if (now - lastFlyWingTime >= flyWingCd)
+                            // In party: Suppress emergency teleport so the bot does not abandon party/healer!
+                        }
+                        else
+                        {
+                            int wingId = GetAvailableFlyWingId();
+                            if (wingId > 0)
                             {
-                                if (isSitting) netManager.ChangePlayerSitStand(false);
-                                netManager.SendUseItem(wingId);
-                                lastFlyWingTime = now;
-                                onTeleport?.Invoke();
+                                if (now - lastFlyWingTime >= flyWingCd)
+                                {
+                                    if (isSitting) netManager.ChangePlayerSitStand(false);
+                                    netManager.SendUseItem(wingId);
+                                    lastFlyWingTime = now;
+                                    onTeleport?.Invoke();
+                                    currentState = BotState.Fleeing;
+                                    BotEngine.Instance?.LogEvent($"[Emergency Escape] HP critically low ({player.Hp}/{player.MaxHp} = {hpPercent:F0}% <= {BotConfigManager.Current.EmergencyFlyWingHpPercent}%)! Used Fly Wing (ID: {wingId}) to escape.");
+                                }
                                 currentState = BotState.Fleeing;
-                                BotEngine.Instance?.LogEvent($"[Emergency Escape] HP critically low ({player.Hp}/{player.MaxHp} = {hpPercent:F0}% <= {BotConfigManager.Current.EmergencyFlyWingHpPercent}%)! Used Fly Wing (ID: {wingId}) to escape.");
+                                return true;
                             }
-                            currentState = BotState.Fleeing;
-                            return true;
                         }
                     }
                 }
             }
 
+            // 2.5. Tracked Boss Soft Avoidance / Steering Check
+            // Proactively maintains safe distance from MVPs and mini-bosses tracked on the minimap without using Fly Wings.
+            bool isPartyFollower = BotConfigManager.Current.PartyEnabled && !BotConfigManager.Current.IsPartyLeader;
+            if (BotConfigManager.Current.AvoidTrackedBosses &&
+                !TownRoutineController.IsTownOrBaseMap(netManager.CurrentMap) &&
+                !isPartyFollower)
+            {
+                float bossRadius = BotConfigManager.Current.BossAvoidanceRadius;
+                if (BossTrackingService.Instance.GetNearestBoss(netManager.CurrentMap, player.CellPosition, bossRadius, out var nearestBoss, out float distToBoss))
+                {
+                    if (isSitting)
+                    {
+                        netManager.ChangePlayerSitStand(false);
+                    }
+
+                    if (BotEngine.Instance != null)
+                    {
+                        if (BotEngine.Instance.Combat != null)
+                            BotEngine.Instance.Combat.Clear();
+                        if (BotEngine.Instance.Targeting != null)
+                            BotEngine.Instance.Targeting.Clear();
+                    }
+
+                    if (now - lastFleeStepTime >= 0.35f)
+                    {
+                        Vector2Int steerTarget = BossTrackingService.Instance.FindSafeSteerTile(player.CellPosition, nearestBoss, bossRadius);
+                        if (steerTarget != player.CellPosition)
+                        {
+                            navigation.SafeMoveTowards(player.CellPosition, steerTarget);
+                            lastFleeStepTime = now;
+                            BotEngine.Instance?.LogEvent($"[Boss Avoidance] Steering away from {nearestBoss.DisplayType} at ({nearestBoss.Position.x},{nearestBoss.Position.y}) (Dist: {distToBoss:F1} <= {bossRadius:F0}) to safe tile ({steerTarget.x},{steerTarget.y})");
+                        }
+                        else
+                        {
+                            Vector2 fleeDir = (Vector2)(player.CellPosition - nearestBoss.Position);
+                            if (fleeDir == Vector2.zero) fleeDir = Vector2.right;
+                            Vector2 fleeTarget = (Vector2)player.CellPosition + fleeDir.normalized * 8f;
+                            Vector2Int fleePos = new Vector2Int(Mathf.RoundToInt(fleeTarget.x), Mathf.RoundToInt(fleeTarget.y));
+                            navigation.SafeMoveTowards(player.CellPosition, fleePos);
+                            lastFleeStepTime = now;
+                        }
+                    }
+
+                    currentState = BotState.Fleeing;
+                    return true;
+                }
+            }
+
             // 3. Monster Avoidance Check (Highest Priority - Teleport or flee immediately!)
-            if (BotConfigManager.Current.AutoAvoidMonsters && !TownRoutineController.IsTownMap(netManager.CurrentMap))
+            if (!PartyController.ShouldSuppressFlee() && BotConfigManager.Current.AutoAvoidMonsters && !TownRoutineController.IsTownMap(netManager.CurrentMap))
             {
                 var dangerMonster = targeting.FindAvoidanceMonster();
                 if (dangerMonster != null)
@@ -459,6 +574,8 @@ namespace RebuildBotPlugin.Controllers
             }
 
             // 4. Safe Rest & Recovery (Sit/Stand State Machine)
+            bool canHealWithSp = BotEngine.Instance != null && BotEngine.Instance.Skills != null && BotEngine.Instance.Skills.HasHealWithSufficientSp();
+
             if (!BotConfigManager.Current.AutoSitToRecover)
             {
                 if (isRecovering) isRecovering = false;
@@ -466,6 +583,18 @@ namespace RebuildBotPlugin.Controllers
                 {
                     netManager.ChangePlayerSitStand(false);
                     BotEngine.Instance?.LogEvent("[Rest] AutoSitToRecover disabled. Standing up.");
+                }
+            }
+            else if (canHealWithSp)
+            {
+                // Bot has Heal configured with sufficient SP - does not need to sit to heal!
+                if (isRecovering) isRecovering = false;
+                if (isSitting)
+                {
+                    netManager.ChangePlayerSitStand(false);
+                    BotEngine.Instance?.LogEvent("[Rest] Heal available with sufficient SP. Standing up to heal.");
+                    currentState = BotState.Idle;
+                    return true;
                 }
             }
             else
@@ -504,12 +633,20 @@ namespace RebuildBotPlugin.Controllers
 
                     if (threat != null || sitAttacker != null)
                     {
-                        // THREAT PRESENT: Stand up and fly wing away to find a safe spot!
+                        // THREAT PRESENT: Stand up!
                         if (isSitting)
                         {
                             netManager.ChangePlayerSitStand(false);
                             string threatName = threat != null ? threat.Name : sitAttacker.Name;
                             BotEngine.Instance?.LogEvent($"[Wake-Up] Hostile monster '{threatName}' approached while resting! Standing up.");
+                        }
+
+                        if (PartyController.ShouldSuppressFlee())
+                        {
+                            // In party: Suppress fleeing. Cancel resting state and allow party / combat to defend!
+                            isRecovering = false;
+                            currentState = BotState.Idle;
+                            return false;
                         }
 
                         int wingId = GetAvailableFlyWingId();
@@ -521,6 +658,15 @@ namespace RebuildBotPlugin.Controllers
                             currentState = BotState.Fleeing;
                             BotEngine.Instance?.LogEvent($"[Rest] Threat nearby ({threat?.Name ?? sitAttacker?.Name}) — using Fly Wing (ID: {wingId}) to find a safe spot.");
                             return true;
+                        }
+
+                        // If wing is on cooldown or out of wings:
+                        if (wingId <= 0)
+                        {
+                            // Out of wings, can't fly wing. Cancel resting so we can fight back!
+                            isRecovering = false;
+                            currentState = BotState.Idle;
+                            return false;
                         }
 
                         // If wing is on cooldown, defend if attacked, else wait in Fleeing

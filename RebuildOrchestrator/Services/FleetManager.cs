@@ -364,6 +364,49 @@ namespace RebuildOrchestrator.Services
 
                 bool isVisible = isRunning && procState != null && procState.ProcessId > 0 && windowManager.IsWindowVisibleForPid(procState.ProcessId);
 
+                bool partyEnabled = false;
+                string partyName = "";
+                bool isPartyLeader = false;
+                bool isPartySupport = false;
+                bool isPartyLooter = false;
+
+                bool isDistributor = false;
+                string distributorMap = "prt_fild08";
+                int distributorX = 150;
+                int distributorY = 360;
+                string vendingShopTitle = "Fleet Depot";
+
+                if (status != null && !string.IsNullOrEmpty(status.PartyName))
+                {
+                    partyEnabled = status.PartyEnabled;
+                    partyName = status.PartyName;
+                    isPartyLeader = status.IsPartyLeader;
+                    isPartySupport = status.IsPartySupport;
+                    isPartyLooter = status.IsPartyLooter;
+                }
+                else
+                {
+                    try
+                    {
+                        string rawConfig = GetProfileConfigRaw(name);
+                        if (!string.IsNullOrWhiteSpace(rawConfig) && rawConfig != "{}")
+                        {
+                            using var doc = JsonDocument.Parse(rawConfig);
+                            if (doc.RootElement.TryGetProperty("PartyEnabled", out var pe)) partyEnabled = pe.GetBoolean();
+                            if (doc.RootElement.TryGetProperty("PartyName", out var pn)) partyName = pn.GetString() ?? "";
+                            if (doc.RootElement.TryGetProperty("IsPartyLeader", out var pl)) isPartyLeader = pl.GetBoolean();
+                            if (doc.RootElement.TryGetProperty("IsPartySupport", out var ps)) isPartySupport = ps.GetBoolean();
+                            if (doc.RootElement.TryGetProperty("IsPartyLooter", out var plt)) isPartyLooter = plt.GetBoolean();
+                            if (doc.RootElement.TryGetProperty("IsDistributor", out var idProp)) isDistributor = idProp.GetBoolean();
+                            if (doc.RootElement.TryGetProperty("DistributorMap", out var dmProp)) distributorMap = dmProp.GetString() ?? "prt_fild08";
+                            if (doc.RootElement.TryGetProperty("DistributorX", out var dxProp)) distributorX = dxProp.GetInt32();
+                            if (doc.RootElement.TryGetProperty("DistributorY", out var dyProp)) distributorY = dyProp.GetInt32();
+                            if (doc.RootElement.TryGetProperty("VendingShopTitle", out var vstProp)) vendingShopTitle = vstProp.GetString() ?? "Fleet Depot";
+                        }
+                    }
+                    catch { }
+                }
+
                 profileList.Add(new BotProfileInfo
                 {
                     ProfileName = name,
@@ -376,9 +419,75 @@ namespace RebuildOrchestrator.Services
                     CpuPercent = procState?.CpuPercent ?? 0.0,
                     RamMegabytes = procState?.RamMb ?? 0.0,
                     ProcessStartTime = procState?.StartTime,
+                    PartyEnabled = partyEnabled,
+                    PartyName = partyName,
+                    IsPartyLeader = isPartyLeader,
+                    IsPartySupport = isPartySupport,
+                    IsPartyLooter = isPartyLooter,
+                    IsInGameParty = status?.IsInGameParty ?? false,
+                    InGamePartyName = status?.InGamePartyName ?? "",
+                    IsInGamePartyLeader = status?.IsInGamePartyLeader ?? false,
+                    InGamePartyLeaderName = status?.InGamePartyLeaderName ?? "",
+                    IsDistributor = status?.IsDistributor ?? isDistributor,
+                    DistributorMap = !string.IsNullOrEmpty(status?.DistributorMap) ? status.DistributorMap : distributorMap,
+                    DistributorX = status?.DistributorX != 0 ? (status?.DistributorX ?? distributorX) : distributorX,
+                    DistributorY = status?.DistributorY != 0 ? (status?.DistributorY ?? distributorY) : distributorY,
+                    IsVendingOpen = status?.IsVendingOpen ?? false,
+                    IsReadyForDonations = status?.IsReadyForDonations ?? false,
+                    VendingShopTitle = !string.IsNullOrEmpty(status?.VendingShopTitle) ? status.VendingShopTitle : vendingShopTitle,
                     Status = status,
                     MacroStatus = macro
                 });
+            }
+
+            // Consensus resolution for In-Game Party Leader:
+            // If multiple bots claim IsInGamePartyLeader = true within the same party (e.g., due to stale offline profiles or split party states),
+            // identify the true leader by consensus so only ONE bot displays the '★ In-Game Leader' badge.
+            var partyGroups = profileList
+                .Where(p => p.PartyEnabled && !string.IsNullOrWhiteSpace(p.PartyName))
+                .GroupBy(p => p.PartyName.Trim(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var group in partyGroups)
+            {
+                var candidateLeaders = group.Where(p => p.IsInGamePartyLeader).ToList();
+                if (candidateLeaders.Count > 1)
+                {
+                    // Tally votes based on InGamePartyLeaderName reported by members
+                    var votes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var member in group)
+                    {
+                        string named = (member.InGamePartyLeaderName ?? "").Trim();
+                        if (!string.IsNullOrEmpty(named))
+                        {
+                            votes[named] = votes.GetValueOrDefault(named, 0) + (member.IsRunning ? 2 : 1);
+                        }
+                    }
+
+                    // Score candidates:
+                    // 1) Votes matching ProfileName or CharacterName
+                    // 2) IsRunning status (running bot beats offline bot)
+                    // 3) Orchestrator designated leader (IsPartyLeader) as tiebreak
+                    BotProfileInfo? trueLeader = candidateLeaders
+                        .OrderByDescending(p => votes.GetValueOrDefault(p.ProfileName, 0) + votes.GetValueOrDefault(p.Status?.CharacterName ?? "", 0))
+                        .ThenByDescending(p => p.IsRunning)
+                        .ThenByDescending(p => p.IsPartyLeader)
+                        .FirstOrDefault();
+
+                    if (trueLeader != null)
+                    {
+                        foreach (var cand in candidateLeaders)
+                        {
+                            if (cand != trueLeader)
+                            {
+                                cand.IsInGamePartyLeader = false;
+                                if (cand.Status != null)
+                                {
+                                    cand.Status.IsInGamePartyLeader = false;
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             return new FleetOverviewResponse
@@ -481,13 +590,388 @@ namespace RebuildOrchestrator.Services
             }
         }
 
+        public bool UpdatePartySettings(PartyUpdateRequest req, out string error)
+        {
+            error = "";
+            if (string.IsNullOrWhiteSpace(req.ProfileName))
+            {
+                error = "Profile name is required.";
+                return false;
+            }
+
+            try
+            {
+                string dir = Path.Combine(ProfilesDir, req.ProfileName);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+                string profileConfig = Path.Combine(dir, "bot_config.json");
+                string raw = File.Exists(profileConfig) ? File.ReadAllText(profileConfig) : GetProfileConfigRaw(req.ProfileName);
+
+                Dictionary<string, object?> dict;
+                try
+                {
+                    dict = JsonSerializer.Deserialize<Dictionary<string, object?>>(raw, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+                }
+                catch
+                {
+                    dict = new();
+                }
+
+                dict["PartyEnabled"] = req.PartyEnabled;
+                dict["PartyName"] = req.PartyName ?? "";
+                dict["IsPartyLeader"] = req.IsPartyLeader;
+                dict["IsPartySupport"] = req.IsPartySupport;
+                dict["IsPartyLooter"] = req.IsPartyLooter;
+
+                if (processManager.IsBotRunning(req.ProfileName))
+                {
+                    dict["Enabled"] = true;
+                }
+
+                string updatedJson = JsonSerializer.Serialize(dict, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(profileConfig, updatedJson);
+
+                // If this profile was designated as Leader, uncheck leader on any other profile in the same party
+                if (req.PartyEnabled && req.IsPartyLeader && !string.IsNullOrWhiteSpace(req.PartyName))
+                {
+                    if (Directory.Exists(ProfilesDir))
+                    {
+                        foreach (var otherDir in Directory.GetDirectories(ProfilesDir))
+                        {
+                            string otherProfile = Path.GetFileName(otherDir);
+                            if (string.Equals(otherProfile, req.ProfileName, StringComparison.OrdinalIgnoreCase)) continue;
+
+                            string otherConfigPath = Path.Combine(otherDir, "bot_config.json");
+                            if (File.Exists(otherConfigPath))
+                            {
+                                try
+                                {
+                                    string otherRaw = File.ReadAllText(otherConfigPath);
+                                    var otherDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(otherRaw, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                                    if (otherDict != null &&
+                                        otherDict.TryGetValue("PartyName", out var otherPNameObj) &&
+                                        string.Equals(otherPNameObj?.ToString(), req.PartyName, StringComparison.OrdinalIgnoreCase) &&
+                                        otherDict.TryGetValue("IsPartyLeader", out var otherLeaderObj) &&
+                                        (otherLeaderObj is bool b && b || otherLeaderObj?.ToString() == "True"))
+                                    {
+                                        otherDict["IsPartyLeader"] = false;
+                                        File.WriteAllText(otherConfigPath, JsonSerializer.Serialize(otherDict, new JsonSerializerOptions { WriteIndented = true }));
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                }
+
+                AddLog(new FleetLogEntry
+                {
+                    Profile = req.ProfileName,
+                    Level = "Info",
+                    Message = $"Updated party settings: Enabled={req.PartyEnabled}, Party='{req.PartyName}', Leader={req.IsPartyLeader}, Support={req.IsPartySupport}, Looter={req.IsPartyLooter}"
+                });
+
+                OnFleetUpdated?.Invoke();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        public List<AccountSummaryItem> GetAccountsSummary()
+        {
+            var registry = LoadAccountsRegistry();
+            var result = new List<AccountSummaryItem>();
+            if (registry?.Accounts == null) return result;
+
+            foreach (var acc in registry.Accounts)
+            {
+                var chars = new List<CharacterSummaryItem>();
+                var usedSlots = new HashSet<int>();
+                if (acc.Characters != null)
+                {
+                    foreach (var c in acc.Characters)
+                    {
+                        chars.Add(new CharacterSummaryItem
+                        {
+                            Name = c.Name,
+                            Slot = c.Slot,
+                            Gender = c.Gender ?? "Male"
+                        });
+                        usedSlots.Add(c.Slot);
+                    }
+                }
+
+                int nextSlot = -1;
+                for (int s = 0; s < 3; s++)
+                {
+                    if (!usedSlots.Contains(s))
+                    {
+                        nextSlot = s;
+                        break;
+                    }
+                }
+
+                result.Add(new AccountSummaryItem
+                {
+                    AccountId = acc.AccountId,
+                    Username = string.IsNullOrWhiteSpace(acc.Username) ? acc.AccountId : acc.Username,
+                    Characters = chars,
+                    NextAvailableSlot = nextSlot
+                });
+            }
+
+            return result;
+        }
+
+        public bool AddBot(AddBotRequest req, out string error)
+        {
+            error = "";
+            if (req == null)
+            {
+                error = "Invalid request.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(req.AccountId))
+            {
+                error = "Account ID is required.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(req.CharacterName))
+            {
+                error = "Character name is required.";
+                return false;
+            }
+
+            string charName = req.CharacterName.Trim();
+            if (charName.Length < 2 || charName.Length > 30)
+            {
+                error = "Character name must be between 2 and 30 characters.";
+                return false;
+            }
+
+            // Validate stats: 6 values, 1-9 each, total = 33
+            if (req.StartingStats == null || req.StartingStats.Count != 6)
+            {
+                error = "Starting stats must contain exactly 6 attributes (STR, AGI, VIT, INT, DEX, LUK).";
+                return false;
+            }
+
+            int sum = 0;
+            foreach (var stat in req.StartingStats)
+            {
+                if (stat < 1 || stat > 9)
+                {
+                    error = "Each starting stat value must be between 1 and 9.";
+                    return false;
+                }
+                sum += stat;
+            }
+
+            if (sum != 33)
+            {
+                error = $"Total starting stat points must equal 33 (current sum is {sum}).";
+                return false;
+            }
+
+            try
+            {
+                // 1. Update or create Account in accounts.json
+                var registry = LoadAccountsRegistry() ?? new AccountsRegistry();
+                var account = registry.Accounts.FirstOrDefault(a => string.Equals(a.AccountId, req.AccountId.Trim(), StringComparison.OrdinalIgnoreCase));
+
+                if (account == null)
+                {
+                    account = new AccountEntry
+                    {
+                        AccountId = req.AccountId.Trim(),
+                        Username = req.AccountId.Trim(),
+                        Password = req.Password ?? "",
+                        IsNewAccount = req.IsNewAccount,
+                        Characters = new List<CharacterEntry>()
+                    };
+                    registry.Accounts.Add(account);
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(req.Password))
+                    {
+                        account.Password = req.Password;
+                    }
+                    if (req.IsNewAccount)
+                    {
+                        account.IsNewAccount = true;
+                    }
+                }
+
+                // Check character slot assignment
+                var existingChar = account.Characters.FirstOrDefault(c => string.Equals(c.Name, charName, StringComparison.OrdinalIgnoreCase));
+                int slot = req.CharacterSlot;
+                if (slot < 0 || slot > 2)
+                {
+                    var usedSlots = new HashSet<int>(account.Characters.Select(c => c.Slot));
+                    slot = -1;
+                    for (int s = 0; s < 3; s++)
+                    {
+                        if (!usedSlots.Contains(s))
+                        {
+                            slot = s;
+                            break;
+                        }
+                    }
+                    if (slot < 0)
+                    {
+                        error = $"Account '{account.AccountId}' already has 3 characters (max slots filled).";
+                        return false;
+                    }
+                }
+
+                if (existingChar != null)
+                {
+                    existingChar.Slot = slot;
+                    existingChar.Gender = req.Gender;
+                    existingChar.StartingStats = req.StartingStats;
+                }
+                else
+                {
+                    account.Characters.Add(new CharacterEntry
+                    {
+                        Name = charName,
+                        Slot = slot,
+                        Gender = req.Gender,
+                        StartingStats = req.StartingStats
+                    });
+                }
+
+                // Save accounts.json
+                string updatedAccountsJson = JsonSerializer.Serialize(registry, new JsonSerializerOptions { WriteIndented = true });
+                string primaryAccountsPath = ResolveAccountsFilePath();
+                try
+                {
+                    string? dir = Path.GetDirectoryName(primaryAccountsPath);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    File.WriteAllText(primaryAccountsPath, updatedAccountsJson);
+                }
+                catch { }
+
+                // Mirror to game root if present
+                string gameRootAccounts = @"C:\Games\RagnarokRebuild\accounts.json";
+                try
+                {
+                    if (!string.Equals(primaryAccountsPath, gameRootAccounts, StringComparison.OrdinalIgnoreCase))
+                    {
+                        File.WriteAllText(gameRootAccounts, updatedAccountsJson);
+                    }
+                }
+                catch { }
+
+                // Mirror to DevPluginDir if present
+                try
+                {
+                    if (!string.Equals(primaryAccountsPath, AccountsFilePath, StringComparison.OrdinalIgnoreCase) && Directory.Exists(DevPluginDir))
+                    {
+                        File.WriteAllText(AccountsFilePath, updatedAccountsJson);
+                    }
+                }
+                catch { }
+
+                // 2. Create bot profile directory & bot_config.json
+                string profileDir = Path.Combine(ProfilesDir, charName);
+                if (!Directory.Exists(profileDir)) Directory.CreateDirectory(profileDir);
+
+                string profileConfigPath = Path.Combine(profileDir, "bot_config.json");
+                Dictionary<string, object?> configDict = new(StringComparer.OrdinalIgnoreCase);
+
+                // Start from root default template if available
+                string rootConfig = Path.Combine(DevPluginDir, "bot_config.json");
+                if (File.Exists(rootConfig))
+                {
+                    try
+                    {
+                        var rootParsed = JsonSerializer.Deserialize<Dictionary<string, object?>>(File.ReadAllText(rootConfig), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (rootParsed != null)
+                        {
+                            foreach (var kvp in rootParsed) configDict[kvp.Key] = kvp.Value;
+                        }
+                    }
+                    catch { }
+                }
+
+                // If profile config already exists, keep existing non-overridden properties
+                if (File.Exists(profileConfigPath))
+                {
+                    try
+                    {
+                        var profParsed = JsonSerializer.Deserialize<Dictionary<string, object?>>(File.ReadAllText(profileConfigPath), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (profParsed != null)
+                        {
+                            foreach (var kvp in profParsed) configDict[kvp.Key] = kvp.Value;
+                        }
+                    }
+                    catch { }
+                }
+
+                // Apply new bot settings
+                configDict["TargetJob"] = req.TargetJob ?? "Novice";
+                configDict["AutoJobChange"] = true;
+                configDict["AutoCreateCharacter"] = true;
+                configDict["AutoCreateAccount"] = req.IsNewAccount;
+                configDict["CharacterGender"] = req.Gender ?? "Male";
+                configDict["StartingStats"] = req.StartingStats;
+                configDict["PreferredCharacterSlot"] = slot;
+                configDict["AutoStatAllocation"] = true;
+                configDict["StatBuildPlan"] = req.StatBuildPlan;
+                configDict["AutoSkillAllocation"] = true;
+                configDict["SkillBuildPlan"] = req.SkillBuildPlan;
+
+                string configJson = JsonSerializer.Serialize(configDict, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(profileConfigPath, configJson);
+
+                // 3. Scan profiles & notify UI
+                ScanExistingProfiles();
+                OnFleetUpdated?.Invoke();
+
+                AddLog(new FleetLogEntry
+                {
+                    Profile = charName,
+                    Level = "Success",
+                    Message = $"Added bot profile '{charName}' (Account: '{account.AccountId}', Slot {slot}, Job: '{req.TargetJob}')."
+                });
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        public static string ResolveAccountsFilePath()
+        {
+            if (File.Exists(AccountsFilePath)) return AccountsFilePath;
+            string gameRootAccounts = @"C:\Games\RagnarokRebuild\accounts.json";
+            if (File.Exists(gameRootAccounts)) return gameRootAccounts;
+            string pluginRootAccounts = @"C:\Games\RagnarokRebuild\rebuildAuto\RebuildBotPlugin\accounts.json";
+            if (File.Exists(pluginRootAccounts)) return pluginRootAccounts;
+            string appBaseAccounts = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "accounts.json");
+            if (File.Exists(appBaseAccounts)) return appBaseAccounts;
+            return AccountsFilePath;
+        }
+
         private AccountsRegistry? LoadAccountsRegistry()
         {
             try
             {
-                if (File.Exists(AccountsFilePath))
+                string path = ResolveAccountsFilePath();
+                if (File.Exists(path))
                 {
-                    string json = File.ReadAllText(AccountsFilePath);
+                    string json = File.ReadAllText(path);
                     return JsonSerializer.Deserialize<AccountsRegistry>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 }
             }
@@ -505,6 +989,7 @@ namespace RebuildOrchestrator.Services
             public string AccountId { get; set; } = "";
             public string Username { get; set; } = "";
             public string Password { get; set; } = "";
+            public bool IsNewAccount { get; set; } = false;
             public List<CharacterEntry> Characters { get; set; } = new();
         }
 
@@ -512,6 +997,56 @@ namespace RebuildOrchestrator.Services
         {
             public string Name { get; set; } = "";
             public int Slot { get; set; } = 0;
+            public string Gender { get; set; } = "Male";
+            public List<int>? StartingStats { get; set; }
+        }
+
+        public static string ResolveMasterItemRulesFilePath()
+        {
+            if (Directory.Exists(ProfilesDir))
+                return Path.Combine(ProfilesDir, "master_item_rules.json");
+
+            string altDir = @"C:\Games\RagnarokRebuild\rebuildAuto\RebuildBotPlugin\profiles";
+            if (Directory.Exists(altDir))
+                return Path.Combine(altDir, "master_item_rules.json");
+
+            return Path.Combine(ProfilesDir, "master_item_rules.json");
+        }
+
+        public List<MasterItemRule> GetMasterItemRules()
+        {
+            try
+            {
+                string path = ResolveMasterItemRulesFilePath();
+                if (File.Exists(path))
+                {
+                    string json = File.ReadAllText(path);
+                    return JsonSerializer.Deserialize<List<MasterItemRule>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<MasterItemRule>();
+                }
+            }
+            catch { }
+            return new List<MasterItemRule>();
+        }
+
+        public bool SaveMasterItemRules(List<MasterItemRule> rules, out string error)
+        {
+            error = "";
+            try
+            {
+                string path = ResolveMasterItemRulesFilePath();
+                string? dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+
+                string json = JsonSerializer.Serialize(rules, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(path, json);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
         }
     }
 }
